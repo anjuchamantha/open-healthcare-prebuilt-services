@@ -27,6 +27,9 @@ target/
 Config.toml
 Cloud.toml
 
+# Database files
+*.db
+
 # IDE specific configuration files
 .idea/
 .vscode/
