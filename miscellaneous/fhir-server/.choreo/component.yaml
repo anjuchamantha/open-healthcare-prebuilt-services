@@ -11,13 +11,13 @@ endpoints:
         - Public
       schemaFilePath: oas/r4-oas-definition.yaml
 
-    - name: international500-fhir-api
-      displayName: international500 FHIR API
-      service:
-        basePath: /fhir/r5
-        port: 9091
-      type: REST
-      networkVisibilities:
-        - Project
-        - Public
-      schemaFilePath: oas/r5-oas-definition.yaml
+    # - name: international500-fhir-api
+    #   displayName: international500 FHIR API
+    #   service:
+    #     basePath: /fhir/r5
+    #     port: 9091
+    #   type: REST
+    #   networkVisibilities:
+    #     - Project
+    #     - Public
+    #   schemaFilePath: oas/r5-oas-definition.yaml
