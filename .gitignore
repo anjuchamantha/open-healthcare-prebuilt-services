@@ -36,3 +36,6 @@ Cloud.toml
 
 # Mac configuration file
 .DS_Store
+
+# Ignore database files
+/db/.*

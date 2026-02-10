@@ -6,9 +6,9 @@ import ballerina/sql;
 import ballerinax/java.jdbc;
 
 // Database configuration
-configurable string dbUrl = ?;
-configurable string dbUser = ?;
-configurable string dbPassword = ?;
+configurable string dbUrl = "jdbc:h2:./db/BAL_FHIR_DB";
+configurable string dbUser = "sa";
+configurable string dbPassword = "";
 public configurable string dbType = "h2"; // Default to H2 for backward compatibility
 configurable boolean clearDataOnStartup = false;
 
