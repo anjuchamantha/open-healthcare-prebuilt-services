@@ -31,9 +31,9 @@ import ballerina/uuid;
 import ballerinax/health.fhir.r4;
 import ballerinax/health.fhirr4;
 import ballerinax/health.fhir.r4.international401;
-import ballerinax/java.jdbc;
 import ballerinax/health.fhir.r4.parser as fhirParser;
 import ballerinax/health.fhir.r4.validator;
+import ballerinax/java.jdbc;
 
 // IPS Configuration Record
 type IpsConfig record {|
@@ -344,9 +344,9 @@ final jdbc:Client jdbcClient = check dbHandler.initializeJdbcClient();
 type ExportJobStatus "in-progress"|"completed"|"failed";
 
 type ExportFile record {
-    string 'type;  // Resource type
-    string url;    // Download URL
-    int count;     // Number of resources
+    string 'type; // Resource type
+    string url; // Download URL
+    int count; // Number of resources
 };
 
 type ExportJob record {
@@ -367,7 +367,7 @@ function init() returns error? {
     if (dbStatus is boolean && dbStatus == true) {
         log:printInfo("DB Init Successfully");
     }
-    
+
     // Load all StructureDefinitions from database and register them in FHIR registry
     error? profileLoadStatus = loadCustomProfiles();
     if (profileLoadStatus is error) {
@@ -375,25 +375,42 @@ function init() returns error? {
     }
 }
 
+listener http:Listener httpListener = http:getDefaultListener();
+
+# initialize source system endpoints here
+
+service http:Service /fhir/r4/metadata on httpListener {
+
+    # The capability statement is a key part of the overall conformance framework in FHIR. It is used as a statement of the
+    # features of actual software, or of a set of rules for an application to provide. This statement connects to all the
+    # detailed statements of functionality, such as StructureDefinitions and ValueSets. This composite statement of application
+    # capability may be used for system compatibility testing, code generation, or as the basis for a conformance assessment.
+    # For further information https://hl7.org/fhir/capabilitystatement.html
+    # + return - capability statement as a json
+    isolated resource function get .() returns r4:CapabilityStatement|error {
+        return check r4:generateFHIRCapabilityStatement();
+    }
+}
+
 // Load all StructureDefinition resources from database and register them in FHIR registry
 function loadCustomProfiles() returns error? {
     log:printInfo("Loading custom profiles from database...");
-    
+
     handlers:ReadHandler readHandler = new handlers:ReadHandler();
     json|error allStructureDefinitions = readHandler.readAllResources(jdbcClient, "StructureDefinition", ());
-    
+
     if allStructureDefinitions is error {
         log:printError("Failed to read StructureDefinitions from database: " + allStructureDefinitions.message());
         return allStructureDefinitions;
     }
-    
+
     // Parse the Bundle response
     r4:Bundle|error bundle = fhirParser:parse(allStructureDefinitions).ensureType();
     if bundle is error {
         log:printError("Failed to parse StructureDefinition bundle: " + bundle.message());
         return bundle;
     }
-    
+
     // Process each StructureDefinition entry
     int registeredCount = 0;
     r4:BundleEntry[]? entries = bundle.entry;
@@ -403,32 +420,32 @@ function loadCustomProfiles() returns error? {
             if resourceField is () {
                 continue;
             }
-            
+
             // Try to get JSON representation for field access
             json|error resourceJson = trap resourceField.toJson();
             if resourceJson is error {
                 log:printWarn("Failed to convert StructureDefinition to JSON: " + resourceJson.message());
                 continue;
             }
-            
+
             string|error urlResult = resourceJson.url.ensureType(string);
             string|error typeResult = resourceJson.'type.ensureType(string);
-            
+
             if urlResult is error || typeResult is error {
                 log:printWarn("Skipping StructureDefinition without url or type");
                 continue;
             }
-            
+
             string customUrl = urlResult;
             string resourceType = typeResult;
-            
+
             // Register the profile in FHIR registry using the same structure as POST endpoint
             readonly & r4:Profile customProfile = {
                 url: customUrl,
                 resourceType: resourceType,
                 modelType: json
             }.cloneReadOnly();
-            
+
             readonly & r4:IGInfoRecord customIG = {
                 title: "Custom Profiles IG",
                 name: "custom-profiles",
@@ -441,10 +458,10 @@ function loadCustomProfiles() returns error? {
                 },
                 searchParameters: []
             }.cloneReadOnly();
-            
-            r4:FHIRImplementationGuide ig = new(customIG);
+
+            r4:FHIRImplementationGuide ig = new (customIG);
             r4:FHIRError? regResult = r4:fhirRegistry.addImplementationGuide(ig);
-            
+
             if regResult is r4:FHIRError {
                 log:printWarn(string `Failed to register profile ${customUrl}: ${regResult.message()}`);
             } else {
@@ -453,7 +470,7 @@ function loadCustomProfiles() returns error? {
             }
         }
     }
-    
+
     log:printInfo(string `Successfully loaded and registered ${registeredCount} custom profile(s) from database`);
     return;
 }
@@ -464,7 +481,7 @@ isolated function performResourceSearch(string resourceType, r4:FHIRContext fhir
     do {
         // Access query parameters from FHIRContext
         map<r4:RequestSearchParameter[]> searchParams = fhirContext.getRequestSearchParameters();
-        
+
         // Convert RequestSearchParameter[] to string[] for handler
         map<string[]> queryParams = {};
         foreach var [key, values] in searchParams.entries() {
@@ -474,11 +491,11 @@ isolated function performResourceSearch(string resourceType, r4:FHIRContext fhir
             }
             queryParams[key] = paramValues;
         }
-        
+
         // Use ReadHandler to search resources
         handlers:ReadHandler readHandler = new handlers:ReadHandler();
         json|error searchResult = readHandler.searchResources(jdbcClient, resourceType, queryParams);
-        
+
         if searchResult is json {
             log:printInfo(string `${resourceType}: Search - Execution Success!`);
             r4:Bundle bundle = check fhirParser:parse(searchResult).ensureType();
@@ -491,7 +508,7 @@ isolated function performResourceSearch(string resourceType, r4:FHIRContext fhir
     } on fail error e {
         log:printError("Error processing search: " + e.message());
         return r4:createFHIRError(
-            "Search operation failed.", r4:ERROR, r4:INFORMATIONAL, httpStatusCode = http:STATUS_BAD_REQUEST);
+                "Search operation failed.", r4:ERROR, r4:INFORMATIONAL, httpStatusCode = http:STATUS_BAD_REQUEST);
     }
 }
 
@@ -545,7 +562,7 @@ isolated function performResourceHistory(string resourceType, string id) returns
             foreach map<json> historyItem in result {
                 string operation = historyItem.get("operation").toString();
                 string lastModifiedStr = historyItem.get("lastModified").toString();
-                
+
                 r4:BundleEntry entry = {
                     request: {
                         method: <r4:HTTPVerb>operation,
@@ -556,13 +573,13 @@ isolated function performResourceHistory(string resourceType, string id) returns
                         lastModified: lastModifiedStr
                     }
                 };
-                
+
                 // For DELETE operations, do not include the resource
                 if operation != "DELETE" {
                     json resourceData = historyItem.get("resource");
                     entry.'resource = resourceData;
                 }
-                
+
                 entries.push(entry);
             }
 
@@ -601,7 +618,7 @@ isolated function performAllResourceHistory(string resourceType) returns r4:Bund
                 json resourceData = historyItem.get("resource");
                 json resourceIdJson = check resourceData.id;
                 string resourceId = resourceIdJson.toString();
-                
+
                 r4:BundleEntry entry = {
                     request: {
                         method: <r4:HTTPVerb>operation,
@@ -612,12 +629,12 @@ isolated function performAllResourceHistory(string resourceType) returns r4:Bund
                         lastModified: lastModifiedStr
                     }
                 };
-                
+
                 // For DELETE operations, do not include the resource
                 if operation != "DELETE" {
                     entry.'resource = resourceData;
                 }
-                
+
                 entries.push(entry);
             }
 
@@ -848,10 +865,10 @@ function performEverythingOperation(string resourceType, string id) returns r4:B
     log:printDebug(string `${resourceType}: Everything - Start Execution for ID: ${id}`);
     do {
         handlers:ReadHandler readHandler = new handlers:ReadHandler();
-        
+
         // First, get the main resource
         json|error mainResource = readHandler.readResource(jdbcClient, resourceType, id);
-        
+
         if mainResource is error {
             string errorMsg = mainResource.message();
             log:printError(string `Read failed: ${errorMsg}`);
@@ -860,30 +877,30 @@ function performEverythingOperation(string resourceType, string id) returns r4:B
             }
             return r4:createFHIRError(string `Failed to fetch ${resourceType}`, r4:ERROR, r4:PROCESSING, httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR);
         }
-        
+
         // Create bundle entries array
         r4:BundleEntry[] entries = [];
-        
+
         // Add the main resource as first entry
         entries.push({
             fullUrl: string `${resourceType}/${id}`,
             'resource: mainResource
         });
-        
+
         // Track resource IDs already added to avoid duplicates
         map<boolean> addedResources = {};
         addedResources[string `${resourceType}/${id}`] = true;
-        
+
         // STEP 1: Forward includes - Use existing fetchAllReferencedResources from ReadHandler
         // This queries the REFERENCES table to find all resources referenced by the main resource
         json[]|error forwardIncluded = readHandler.fetchAllReferencedResources(jdbcClient, resourceType, id);
-        
+
         if forwardIncluded is json[] {
             foreach json entry in forwardIncluded {
                 map<json> entryMap = <map<json>>entry;
                 string? fullUrl = entryMap["fullUrl"] is string ? <string>entryMap["fullUrl"] : ();
                 json? resourceJson = entryMap["resource"];
-                
+
                 if fullUrl is string && resourceJson != () && !addedResources.hasKey(fullUrl) {
                     entries.push({
                         fullUrl: fullUrl,
@@ -895,17 +912,17 @@ function performEverythingOperation(string resourceType, string id) returns r4:B
         } else {
             log:printWarn(string `Failed to fetch forward references: ${forwardIncluded.message()}`);
         }
-        
+
         // STEP 2: Reverse includes - Use existing fetchAllReferencingResources from ReadHandler
         // This queries the REFERENCES table to find all resources that reference the main resource
         json[]|error reverseIncluded = readHandler.fetchAllReferencingResources(jdbcClient, resourceType, id);
-        
+
         if reverseIncluded is json[] {
             foreach json entry in reverseIncluded {
                 map<json> entryMap = <map<json>>entry;
                 string? fullUrl = entryMap["fullUrl"] is string ? <string>entryMap["fullUrl"] : ();
                 json? resourceJson = entryMap["resource"];
-                
+
                 if fullUrl is string && resourceJson != () && !addedResources.hasKey(fullUrl) {
                     entries.push({
                         fullUrl: fullUrl,
@@ -917,17 +934,17 @@ function performEverythingOperation(string resourceType, string id) returns r4:B
         } else {
             log:printWarn(string `Failed to fetch reverse references: ${reverseIncluded.message()}`);
         }
-        
+
         // Create the bundle
         r4:Bundle bundle = {
             resourceType: "Bundle",
             'type: "searchset",
             entry: entries
         };
-        
+
         log:printDebug(string `${resourceType}: Everything - Retrieved ${entries.length()} resources (forward + reverse references)`);
         return bundle;
-        
+
     } on fail error e {
         log:printError(string `Error processing ${resourceType}/$everything: ${e.message()}`);
         return r4:createFHIRError(string `Everything operation failed: ${e.message()}`, r4:ERROR, r4:PROCESSING, httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR);
@@ -939,7 +956,7 @@ function performEverythingOperation(string resourceType, string id) returns r4:B
 // Uses direct database queries instead of HTTP calls for better performance
 function performIpsSummaryOperation(string resourceType, string id) returns r4:Bundle|r4:OperationOutcome|r4:FHIRError {
     log:printDebug(string `${resourceType}: IPS Summary - Start Execution for ID: ${id}`);
-    
+
     // Define IPS sections with their resource types
     map<string[]> ipsSections = {
         "problems": ["Condition"],
@@ -949,13 +966,13 @@ function performIpsSummaryOperation(string resourceType, string id) returns r4:B
         "procedures": ["Procedure"],
         "results": ["Observation", "DiagnosticReport"]
     };
-    
+
     do {
         handlers:ReadHandler readHandler = new handlers:ReadHandler();
-        
+
         // First, get the main resource (Patient)
         json|error mainResource = readHandler.readResource(jdbcClient, resourceType, id);
-        
+
         if mainResource is error {
             string errorMsg = mainResource.message();
             log:printError(string `Read failed: ${errorMsg}`);
@@ -964,15 +981,15 @@ function performIpsSummaryOperation(string resourceType, string id) returns r4:B
             }
             return r4:createFHIRError(string `Failed to fetch ${resourceType}`, r4:ERROR, r4:PROCESSING, httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR);
         }
-        
+
         // Track all resources and organize by section
         map<json[]> resourcesBySection = {};
         map<boolean> addedResources = {};
         addedResources[string `${resourceType}/${id}`] = true;
-        
+
         // Fetch all FORWARD references (resources the Patient references)
         json[]|error forwardIncluded = readHandler.fetchAllReferencedResources(jdbcClient, resourceType, id);
-        
+
         if forwardIncluded is json[] {
             log:printDebug(string `IPS: Found ${forwardIncluded.length()} forward referenced resources`);
             // Organize resources by IPS section
@@ -980,10 +997,10 @@ function performIpsSummaryOperation(string resourceType, string id) returns r4:B
                 map<json> entryMap = <map<json>>entry;
                 json? resourceJson = entryMap["resource"];
                 string? fullUrl = entryMap["fullUrl"] is string ? <string>entryMap["fullUrl"] : ();
-                
+
                 if resourceJson is map<json> && fullUrl is string && !addedResources.hasKey(fullUrl) {
                     string? resType = resourceJson["resourceType"] is string ? <string>resourceJson["resourceType"] : ();
-                    
+
                     if resType is string {
                         // Find which IPS section this resource belongs to
                         foreach var [sectionName, resourceTypes] in ipsSections.entries() {
@@ -1006,11 +1023,11 @@ function performIpsSummaryOperation(string resourceType, string id) returns r4:B
         } else {
             log:printWarn(string `Failed to fetch forward references for IPS: ${forwardIncluded.message()}`);
         }
-        
+
         // Fetch all REVERSE references (resources that reference this Patient)
         // This is what we need for IPS - clinical resources with subject=Patient/xxx
         json[]|error reverseIncluded = readHandler.fetchAllReferencingResources(jdbcClient, resourceType, id);
-        
+
         if reverseIncluded is json[] {
             log:printDebug(string `IPS: Found ${reverseIncluded.length()} reverse referenced resources`);
             // Organize resources by IPS section
@@ -1018,10 +1035,10 @@ function performIpsSummaryOperation(string resourceType, string id) returns r4:B
                 map<json> entryMap = <map<json>>entry;
                 json? resourceJson = entryMap["resource"];
                 string? fullUrl = entryMap["fullUrl"] is string ? <string>entryMap["fullUrl"] : ();
-                
+
                 if resourceJson is map<json> && fullUrl is string && !addedResources.hasKey(fullUrl) {
                     string? resType = resourceJson["resourceType"] is string ? <string>resourceJson["resourceType"] : ();
-                    
+
                     if resType is string {
                         // Find which IPS section this resource belongs to
                         foreach var [sectionName, resourceTypes] in ipsSections.entries() {
@@ -1044,14 +1061,14 @@ function performIpsSummaryOperation(string resourceType, string id) returns r4:B
         } else {
             log:printWarn(string `Failed to fetch reverse references for IPS: ${reverseIncluded.message()}`);
         }
-        
+
         // Create Composition resource with IPS sections
         time:Utc currentTime = time:utcNow();
         string timestamp = time:utcToString(currentTime);
-        
+
         // Build composition sections
         json[] compositionSections = [];
-        
+
         // Section codes according to IPS IG (LOINC codes)
         map<json> sectionCodes = {
             "problems": {"system": "http://loinc.org", "code": "11450-4", "display": "Problem list"},
@@ -1061,7 +1078,7 @@ function performIpsSummaryOperation(string resourceType, string id) returns r4:B
             "procedures": {"system": "http://loinc.org", "code": "47519-4", "display": "Procedures"},
             "results": {"system": "http://loinc.org", "code": "30954-2", "display": "Results"}
         };
-        
+
         map<string> sectionTitles = {
             "problems": "Active Problems",
             "allergies": "Allergies and Intolerances",
@@ -1070,31 +1087,31 @@ function performIpsSummaryOperation(string resourceType, string id) returns r4:B
             "procedures": "History of Procedures",
             "results": "Results"
         };
-        
+
         foreach var [sectionName, resources] in resourcesBySection.entries() {
             json[] sectionRefs = [];
             string divContent = "";
-            
+
             foreach json res in resources {
                 map<json> resourceMap = <map<json>>res;
                 string? resId = resourceMap["id"] is string ? <string>resourceMap["id"] : ();
                 string? resType = resourceMap["resourceType"] is string ? <string>resourceMap["resourceType"] : ();
-                
+
                 if resId is string && resType is string {
                     sectionRefs.push({"reference": string `${resType}/${resId}`});
                     divContent += string `${resType}/${resId}, `;
                 }
             }
-            
+
             if sectionRefs.length() > 0 {
                 // Clean up divContent
                 if divContent.endsWith(", ") {
                     divContent = divContent.substring(0, divContent.length() - 2);
                 }
-                
+
                 json sectionCode = sectionCodes.hasKey(sectionName) ? sectionCodes.get(sectionName) : {};
                 string sectionTitle = sectionTitles.hasKey(sectionName) ? sectionTitles.get(sectionName) : sectionName;
-                
+
                 json section = {
                     "code": {"coding": [sectionCode]},
                     "title": sectionTitle,
@@ -1107,18 +1124,20 @@ function performIpsSummaryOperation(string resourceType, string id) returns r4:B
                 compositionSections.push(section);
             }
         }
-        
+
         // Create Composition resource
         json composition = {
             "resourceType": "Composition",
             "id": string `ips-${id}`,
             "status": "final",
             "type": {
-                "coding": [{
-                    "system": "http://loinc.org",
-                    "code": "60591-5",
-                    "display": "Patient summary Document"
-                }]
+                "coding": [
+                    {
+                        "system": "http://loinc.org",
+                        "code": "60591-5",
+                        "display": "Patient summary Document"
+                    }
+                ]
             },
             "subject": {"reference": string `${resourceType}/${id}`},
             "date": timestamp,
@@ -1127,22 +1146,22 @@ function performIpsSummaryOperation(string resourceType, string id) returns r4:B
             "custodian": {"reference": ips.custodianOrganization},
             "section": compositionSections
         };
-        
+
         // Build final bundle entries
         r4:BundleEntry[] entries = [];
-        
+
         // 1. Composition as first entry (IPS requirement)
         entries.push({
             fullUrl: string `Composition/ips-${id}`,
             'resource: composition
         });
-        
+
         // 2. Patient as second entry
         entries.push({
             fullUrl: string `${resourceType}/${id}`,
             'resource: mainResource
         });
-        
+
         // 3. Add all other resources
         foreach var resources in resourcesBySection {
             foreach json res in resources {
@@ -1156,11 +1175,11 @@ function performIpsSummaryOperation(string resourceType, string id) returns r4:B
                 }
             }
         }
-        
+
         // Create the IPS Bundle
         r4:Bundle ipsBundle = {
             resourceType: "Bundle",
-            'type: "document",  // IPS requires document type
+            'type: "document", // IPS requires document type
             timestamp: timestamp,
             identifier: {
                 system: ips.identifierSystem,
@@ -1168,14 +1187,14 @@ function performIpsSummaryOperation(string resourceType, string id) returns r4:B
             },
             entry: entries
         };
-        
+
         log:printDebug(string `${resourceType}: IPS Summary - Generated ${entries.length()} entries using database access`);
         return ipsBundle;
-        
+
     } on fail error e {
         log:printError(string `IPS Summary operation failed: ${e.message()}`);
-        return r4:createFHIRError(string `Failed to generate IPS: ${e.message()}`, r4:ERROR, r4:PROCESSING, 
-            httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR);
+        return r4:createFHIRError(string `Failed to generate IPS: ${e.message()}`, r4:ERROR, r4:PROCESSING,
+                httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR);
     }
 }
 
@@ -1191,7 +1210,7 @@ function initiateExportOperation(string resourceType, r4:FHIRContext fhirContext
             outputFormat = "single"; // all resources in one file
         }
     }
-    
+
     // Extract _type parameter (comma-separated list of resource types to include)
     // Supports both: ?_type=Org,Prac and ?_type=Org&_type=Prac
     string[]? typeFilter = ();
@@ -1217,20 +1236,20 @@ function initiateExportOperation(string resourceType, r4:FHIRContext fhirContext
             log:printDebug(string `Export will filter resource types: ${typeFilter.toString()}`);
         }
     }
-    
+
     log:printDebug(string `${resourceType}: Export - Initiate async export${patientId is string ? " for patient " + patientId : ""} with output format: ${outputFormat}`);
-    
+
     // Generate unique job ID
     string jobId = uuid:createType1AsString();
-    
+
     // Create export job record
     time:Utc currentTime = time:utcNow();
     string transactionTime = time:utcToString(currentTime);
-    
-    string requestPath = patientId is string 
+
+    string requestPath = patientId is string
         ? string `/fhir/r4/${resourceType}/${patientId}/\$export`
         : string `/fhir/r4/${resourceType}/\$export`;
-    
+
     ExportJob job = {
         jobId: jobId,
         status: "in-progress",
@@ -1239,12 +1258,12 @@ function initiateExportOperation(string resourceType, r4:FHIRContext fhirContext
         request: requestPath,
         output: []
     };
-    
+
     // Create job directory and store job metadata
     do {
         string jobDir = EXPORT_DIR + jobId + "/";
         check file:createDir(jobDir, file:RECURSIVE);
-        
+
         string metadataPath = jobDir + JOB_METADATA_FILE;
         json jobJson = job.toJson();
         map<json> jobMap = <map<json>>jobJson;
@@ -1262,15 +1281,15 @@ function initiateExportOperation(string resourceType, r4:FHIRContext fhirContext
         log:printError(string `Failed to create export job directory: ${e.message()}`);
         return r4:createFHIRError("Failed to initiate export", r4:ERROR, r4:PROCESSING, httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR);
     }
-    
+
     // Start background processing in a new strand
     future<()> _ = start processExportJob(jobId, resourceType, patientId, outputFormat, typeFilter);
-    
+
     // Return 202 Accepted with Content-Location header
     http:Response response = new;
     response.statusCode = 202;
     response.setHeader("Content-Location", string `/fhir/_export/status/${jobId}`);
-    
+
     log:printDebug(string `${resourceType}: Export - Job ${jobId} initiated`);
     return response;
 }
@@ -1278,14 +1297,14 @@ function initiateExportOperation(string resourceType, r4:FHIRContext fhirContext
 // Background worker to process export job
 function processExportJob(string jobId, string resourceType, string? patientId = (), string outputFormat = "split", string[]? typeFilter = ()) {
     log:printDebug(string `Export Job ${jobId}: Starting background processing${patientId is string ? " for patient " + patientId : ""} with output format: ${outputFormat}`);
-    
+
     do {
         handlers:ReadHandler readHandler = new handlers:ReadHandler();
-        
+
         string jobDir = EXPORT_DIR + jobId + "/";
         string metadataPath = jobDir + JOB_METADATA_FILE;
         ExportFile[] outputFiles = [];
-        
+
         if patientId is () {
             // Patient ID is required for export - mark job as failed
             do {
@@ -1299,138 +1318,138 @@ function processExportJob(string jobId, string resourceType, string? patientId =
             }
             return;
         }
-        
+
         // Patient-specific export using $everything logic (forward + reverse references)
         json patientResource = check readHandler.readResource(jdbcClient, "Patient", patientId);
-            
-            // Track all resources by type
-            map<json[]> resourcesByType = {};
-            
-            // Add the Patient resource
-            resourcesByType["Patient"] = [patientResource];
-            
-            // Fetch all FORWARD references (resources the Patient references)
-            json[]|error forwardIncluded = readHandler.fetchAllReferencedResources(jdbcClient, "Patient", patientId);
-            
-            if forwardIncluded is json[] {
-                foreach json entry in forwardIncluded {
-                    map<json> entryMap = <map<json>>entry;
-                    json? resourceJson = entryMap["resource"];
-                    
-                    if resourceJson is map<json> {
-                        string? resType = resourceJson["resourceType"] is string ? <string>resourceJson["resourceType"] : ();
-                        
-                        if resType is string {
-                            if !resourcesByType.hasKey(resType) {
-                                resourcesByType[resType] = [];
-                            }
-                            json[]? existingArray = resourcesByType.get(resType);
-                            if existingArray is json[] {
-                                existingArray.push(resourceJson);
-                                resourcesByType[resType] = existingArray;
-                            }
+
+        // Track all resources by type
+        map<json[]> resourcesByType = {};
+
+        // Add the Patient resource
+        resourcesByType["Patient"] = [patientResource];
+
+        // Fetch all FORWARD references (resources the Patient references)
+        json[]|error forwardIncluded = readHandler.fetchAllReferencedResources(jdbcClient, "Patient", patientId);
+
+        if forwardIncluded is json[] {
+            foreach json entry in forwardIncluded {
+                map<json> entryMap = <map<json>>entry;
+                json? resourceJson = entryMap["resource"];
+
+                if resourceJson is map<json> {
+                    string? resType = resourceJson["resourceType"] is string ? <string>resourceJson["resourceType"] : ();
+
+                    if resType is string {
+                        if !resourcesByType.hasKey(resType) {
+                            resourcesByType[resType] = [];
+                        }
+                        json[]? existingArray = resourcesByType.get(resType);
+                        if existingArray is json[] {
+                            existingArray.push(resourceJson);
+                            resourcesByType[resType] = existingArray;
                         }
                     }
                 }
             }
-            
-            // Fetch all REVERSE references (resources that reference this Patient)
-            json[]|error reverseIncluded = readHandler.fetchAllReferencingResources(jdbcClient, "Patient", patientId);
-            
-            if reverseIncluded is json[] {
-                foreach json entry in reverseIncluded {
-                    map<json> entryMap = <map<json>>entry;
-                    json? resourceJson = entryMap["resource"];
-                    
-                    if resourceJson is map<json> {
-                        string? resType = resourceJson["resourceType"] is string ? <string>resourceJson["resourceType"] : ();
-                        
-                        if resType is string {
-                            if !resourcesByType.hasKey(resType) {
-                                resourcesByType[resType] = [];
-                            }
-                            json[]? existingArray = resourcesByType.get(resType);
-                            if existingArray is json[] {
-                                existingArray.push(resourceJson);
-                                resourcesByType[resType] = existingArray;
-                            }
+        }
+
+        // Fetch all REVERSE references (resources that reference this Patient)
+        json[]|error reverseIncluded = readHandler.fetchAllReferencingResources(jdbcClient, "Patient", patientId);
+
+        if reverseIncluded is json[] {
+            foreach json entry in reverseIncluded {
+                map<json> entryMap = <map<json>>entry;
+                json? resourceJson = entryMap["resource"];
+
+                if resourceJson is map<json> {
+                    string? resType = resourceJson["resourceType"] is string ? <string>resourceJson["resourceType"] : ();
+
+                    if resType is string {
+                        if !resourcesByType.hasKey(resType) {
+                            resourcesByType[resType] = [];
+                        }
+                        json[]? existingArray = resourcesByType.get(resType);
+                        if existingArray is json[] {
+                            existingArray.push(resourceJson);
+                            resourcesByType[resType] = existingArray;
                         }
                     }
                 }
             }
-            
-            // Write NDJSON files based on output format
-            if outputFormat == "single" {
-                // Single file containing all resources
-                string fileName = "export.ndjson";
-                string filePath = jobDir + fileName;
-                string ndjsonContent = "";
-                int totalCount = 0;
-                
-                foreach var [resType, resources] in resourcesByType.entries() {
-                    // Apply type filter if specified
-                    if typeFilter is string[] && !typeFilter.some(t => t == resType) {
-                        continue;
-                    }
+        }
+
+        // Write NDJSON files based on output format
+        if outputFormat == "single" {
+            // Single file containing all resources
+            string fileName = "export.ndjson";
+            string filePath = jobDir + fileName;
+            string ndjsonContent = "";
+            int totalCount = 0;
+
+            foreach var [resType, resources] in resourcesByType.entries() {
+                // Apply type filter if specified
+                if typeFilter is string[] && !typeFilter.some(t => t == resType) {
+                    continue;
+                }
+                foreach json res in resources {
+                    ndjsonContent += res.toJsonString() + "\n";
+                    totalCount += 1;
+                }
+            }
+
+            check io:fileWriteString(filePath, ndjsonContent);
+
+            outputFiles.push({
+                'type: "Bundle",
+                url: string `/fhir/_export/download/${jobId}/${fileName}`,
+                count: totalCount
+            });
+
+            log:printDebug(string `Export Job ${jobId}: Generated ${fileName} with ${totalCount} total resources`);
+        } else {
+            // Separate files per resource type (default)
+            foreach var [resType, resources] in resourcesByType.entries() {
+                // Apply type filter if specified
+                if typeFilter is string[] && !typeFilter.some(t => t == resType) {
+                    continue;
+                }
+                if resources.length() > 0 {
+                    string fileName = resType + ".ndjson";
+                    string filePath = jobDir + fileName;
+
+                    // Write NDJSON (one resource per line)
+                    string ndjsonContent = "";
                     foreach json res in resources {
                         ndjsonContent += res.toJsonString() + "\n";
-                        totalCount += 1;
                     }
-                }
-                
-                check io:fileWriteString(filePath, ndjsonContent);
-                
-                outputFiles.push({
-                    'type: "Bundle",
-                    url: string `/fhir/_export/download/${jobId}/${fileName}`,
-                    count: totalCount
-                });
-                
-                log:printDebug(string `Export Job ${jobId}: Generated ${fileName} with ${totalCount} total resources`);
-            } else {
-                // Separate files per resource type (default)
-                foreach var [resType, resources] in resourcesByType.entries() {
-                    // Apply type filter if specified
-                    if typeFilter is string[] && !typeFilter.some(t => t == resType) {
-                        continue;
-                    }
-                    if resources.length() > 0 {
-                        string fileName = resType + ".ndjson";
-                        string filePath = jobDir + fileName;
-                        
-                        // Write NDJSON (one resource per line)
-                        string ndjsonContent = "";
-                        foreach json res in resources {
-                            ndjsonContent += res.toJsonString() + "\n";
-                        }
-                        
-                        check io:fileWriteString(filePath, ndjsonContent);
-                        
-                        outputFiles.push({
-                            'type: resType,
-                            url: string `/fhir/_export/download/${jobId}/${fileName}`,
-                            count: resources.length()
-                        });
-                        
-                        log:printDebug(string `Export Job ${jobId}: Generated ${fileName} with ${resources.length()} resources`);
-                    }
+
+                    check io:fileWriteString(filePath, ndjsonContent);
+
+                    outputFiles.push({
+                        'type: resType,
+                        url: string `/fhir/_export/download/${jobId}/${fileName}`,
+                        count: resources.length()
+                    });
+
+                    log:printDebug(string `Export Job ${jobId}: Generated ${fileName} with ${resources.length()} resources`);
                 }
             }
-        
+        }
+
         // Update job status to completed
         json jobMetadata = check io:fileReadJson(metadataPath);
         ExportJob job = check jobMetadata.cloneWithType(ExportJob);
         job.status = "completed";
         job.output = outputFiles;
         check io:fileWriteJson(metadataPath, job.toJson());
-        
+
         log:printInfo(string `Export Job ${jobId}: Completed successfully with ${outputFiles.length()} files`);
-        
+
     } on fail error e {
         // Update job status to failed
         string jobDir = EXPORT_DIR + jobId + "/";
         string metadataPath = jobDir + JOB_METADATA_FILE;
-        
+
         do {
             json jobMetadata = check io:fileReadJson(metadataPath);
             ExportJob job = check jobMetadata.cloneWithType(ExportJob);
@@ -1440,7 +1459,7 @@ function processExportJob(string jobId, string resourceType, string? patientId =
         } on fail error metadataError {
             log:printError(string `Export Job ${jobId}: Failed to update job metadata: ${metadataError.message()}`);
         }
-        
+
         log:printError(string `Export Job ${jobId}: Failed - ${e.message()}`);
     }
 }
@@ -1450,28 +1469,28 @@ function getExportStatus(string jobId) returns http:Response|r4:FHIRError {
     // Read job metadata from file
     string jobDir = EXPORT_DIR + jobId + "/";
     string metadataPath = jobDir + JOB_METADATA_FILE;
-    
+
     // Check if job directory exists
     boolean|error dirExists = file:test(jobDir, file:EXISTS);
     if dirExists is error || !dirExists {
         return r4:createFHIRError("Export job not found", r4:ERROR, r4:PROCESSING, httpStatusCode = http:STATUS_NOT_FOUND);
     }
-    
+
     // Read job metadata
     json|error jobMetadata = io:fileReadJson(metadataPath);
     if jobMetadata is error {
         log:printError(string `Failed to read job metadata for ${jobId}: ${jobMetadata.message()}`);
         return r4:createFHIRError("Failed to read export job status", r4:ERROR, r4:PROCESSING, httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR);
     }
-    
+
     ExportJob|error job = jobMetadata.cloneWithType(ExportJob);
     if job is error {
         log:printError(string `Failed to parse job metadata for ${jobId}: ${job.message()}`);
         return r4:createFHIRError("Invalid export job metadata", r4:ERROR, r4:PROCESSING, httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR);
     }
-    
+
     http:Response response = new;
-    
+
     if job.status == "in-progress" {
         // Still processing
         response.statusCode = 202;
@@ -1481,7 +1500,7 @@ function getExportStatus(string jobId) returns http:Response|r4:FHIRError {
         // Export completed - return manifest
         response.statusCode = 200;
         response.setHeader("Content-Type", "application/json");
-        
+
         // Convert ExportFile[] to json array
         json[] outputJson = [];
         foreach ExportFile exportFile in job.output {
@@ -1491,7 +1510,7 @@ function getExportStatus(string jobId) returns http:Response|r4:FHIRError {
                 "count": exportFile.count
             });
         }
-        
+
         json manifest = {
             "transactionTime": job.transactionTime,
             "request": job.request,
@@ -1499,7 +1518,7 @@ function getExportStatus(string jobId) returns http:Response|r4:FHIRError {
             "output": outputJson,
             "error": []
         };
-        
+
         response.setJsonPayload(manifest);
         return response;
     } else {
@@ -1513,40 +1532,40 @@ function downloadExportFile(string jobId, string fileName) returns http:Response
     // Read job metadata from file
     string jobDir = EXPORT_DIR + jobId + "/";
     string metadataPath = jobDir + JOB_METADATA_FILE;
-    
+
     // Check if job directory exists
     boolean|error dirExists = file:test(jobDir, file:EXISTS);
     if dirExists is error || !dirExists {
         return r4:createFHIRError("Export job not found", r4:ERROR, r4:PROCESSING, httpStatusCode = http:STATUS_NOT_FOUND);
     }
-    
+
     // Read and validate job metadata
     json|error jobMetadata = io:fileReadJson(metadataPath);
     if jobMetadata is error {
         return r4:createFHIRError("Failed to read export job metadata", r4:ERROR, r4:PROCESSING, httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR);
     }
-    
+
     ExportJob|error job = jobMetadata.cloneWithType(ExportJob);
     if job is error {
         return r4:createFHIRError("Invalid export job metadata", r4:ERROR, r4:PROCESSING, httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR);
     }
-    
+
     if job.status != "completed" {
         return r4:createFHIRError("Export job not completed", r4:ERROR, r4:PROCESSING, httpStatusCode = http:STATUS_BAD_REQUEST);
     }
-    
+
     // Read file
     string filePath = EXPORT_DIR + jobId + "/" + fileName;
-    
+
     do {
         string fileContent = check io:fileReadString(filePath);
-        
+
         http:Response response = new;
         response.statusCode = 200;
         response.setHeader("Content-Type", "application/fhir+ndjson");
         response.setHeader("Content-Disposition", string `attachment; filename="${fileName}"`);
         response.setTextPayload(fileContent);
-        
+
         return response;
     } on fail error e {
         log:printError(string `Failed to read export file: ${e.message()}`);
@@ -1560,13 +1579,13 @@ isolated function performValidateOperation(string resourceType, Parameters param
     do {
         // Extract the resource from Parameters
         international401:ParametersParameter[]? parameters = params.'parameter;
-        
+
         if parameters is () || parameters.length() == 0 {
             return r4:createFHIRError("No parameters provided for validation", r4:ERROR, r4:INVALID, httpStatusCode = http:STATUS_BAD_REQUEST);
         }
 
         json? resourceToValidate = ();
-        
+
         // Extract resource from parameters
         foreach var param in parameters {
             if param.name == "resource" {
@@ -1584,17 +1603,17 @@ isolated function performValidateOperation(string resourceType, Parameters param
 
         // Validate using the FHIR validator
         var validationResult = validator:validate(resourceToValidate);
-        
+
         r4:OperationOutcome outcome;
-        
+
         if validationResult is error {
             // Validation failed - extract detailed errors
             log:printInfo(string `${resourceType}: Validation - Failed with errors`);
-            
+
             FHIRValidationErrorDetail & readonly detail = <FHIRValidationErrorDetail & readonly>validationResult.detail();
             validator:FHIRValidationIssueDetail issues = detail.issues[0];
             r4:FHIRIssueDetail[] issueArray = [];
-            
+
             string[]? errorInIssue = issues.detailedErrors;
             if errorInIssue != () {
                 foreach var i in 0 ..< errorInIssue.length() {
@@ -1608,14 +1627,14 @@ isolated function performValidateOperation(string resourceType, Parameters param
                     issueArray.push(issue);
                 }
             }
-            
+
             // Convert FHIRIssueDetail to OperationOutcomeIssue
             r4:OperationOutcomeIssue[] opIssueArray = [];
             foreach var i in 0 ..< issueArray.length() {
                 r4:OperationOutcomeIssue opIssue = issueDetailToOperationOutcomeIssue(issueArray[i]);
                 opIssueArray.push(opIssue);
             }
-            
+
             outcome = {
                 resourceType: "OperationOutcome",
                 issue: opIssueArray
@@ -1625,11 +1644,13 @@ isolated function performValidateOperation(string resourceType, Parameters param
             log:printInfo(string `${resourceType}: Validation - Success`);
             outcome = {
                 resourceType: "OperationOutcome",
-                issue: [{
-                    severity: "information",
-                    code: "informational",
-                    diagnostics: "Validation successful"
-                }]
+                issue: [
+                    {
+                        severity: "information",
+                        code: "informational",
+                        diagnostics: "Validation successful"
+                    }
+                ]
             };
         }
 
@@ -1643,12 +1664,12 @@ isolated function performValidateOperation(string resourceType, Parameters param
 
 // # Export Endpoints Service (for async bulk data export)
 service /fhir/_export on new http:Listener(9091) {
-    
+
     // Check export job status
     resource function get status/[string jobId]() returns http:Response|r4:FHIRError {
         return getExportStatus(jobId);
     }
-    
+
     // Download export file
     resource function get download/[string jobId]/[string fileName]() returns http:Response|r4:FHIRError {
         return downloadExportFile(jobId, fileName);
@@ -2599,7 +2620,6 @@ service /fhir/r4/ResearchSubject on new fhirr4:Listener(config = r4_api_config:r
         return <ResearchSubject|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ResearchSubject researchsubject) returns ResearchSubject|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("ResearchSubject", researchsubject.toJson());
@@ -2663,7 +2683,6 @@ service /fhir/r4/Subscription on new fhirr4:Listener(config = r4_api_config:subs
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, Subscription, "Subscription");
         return <Subscription|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Subscription subscription) returns Subscription|r4:OperationOutcome|r4:FHIRError {
@@ -2729,7 +2748,6 @@ service /fhir/r4/GraphDefinition on new fhirr4:Listener(config = r4_api_config:g
         return <GraphDefinition|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, GraphDefinition graphdefinition) returns GraphDefinition|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("GraphDefinition", graphdefinition.toJson());
@@ -2793,7 +2811,6 @@ service /fhir/r4/DocumentReference on new fhirr4:Listener(config = r4_api_config
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, DocumentReference, "DocumentReference");
         return <DocumentReference|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, DocumentReference documentreference) returns DocumentReference|r4:OperationOutcome|r4:FHIRError {
@@ -2859,7 +2876,6 @@ service /fhir/r4/Parameters on new fhirr4:Listener(config = r4_api_config:parame
         return <Parameters|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Parameters parameters) returns Parameters|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("Parameters", parameters.toJson());
@@ -2923,7 +2939,6 @@ service /fhir/r4/CoverageEligibilityResponse on new fhirr4:Listener(config = r4_
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, CoverageEligibilityResponse, "CoverageEligibilityResponse");
         return <CoverageEligibilityResponse|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, CoverageEligibilityResponse coverageeligibilityresponse) returns CoverageEligibilityResponse|r4:OperationOutcome|r4:FHIRError {
@@ -2989,7 +3004,6 @@ service /fhir/r4/MeasureReport on new fhirr4:Listener(config = r4_api_config:mea
         return <MeasureReport|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MeasureReport measurereport) returns MeasureReport|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("MeasureReport", measurereport.toJson());
@@ -3053,7 +3067,6 @@ service /fhir/r4/SubstanceReferenceInformation on new fhirr4:Listener(config = r
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, SubstanceReferenceInformation, "SubstanceReferenceInformation");
         return <SubstanceReferenceInformation|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, SubstanceReferenceInformation substancereferenceinformation) returns SubstanceReferenceInformation|r4:OperationOutcome|r4:FHIRError {
@@ -3311,7 +3324,6 @@ service /fhir/r4/SupplyRequest on new fhirr4:Listener(config = r4_api_config:sup
         return <SupplyRequest|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, SupplyRequest supplyrequest) returns SupplyRequest|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("SupplyRequest", supplyrequest.toJson());
@@ -3440,7 +3452,6 @@ service /fhir/r4/VerificationResult on new fhirr4:Listener(config = r4_api_confi
         return <VerificationResult|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, VerificationResult verificationresult) returns VerificationResult|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("VerificationResult", verificationresult.toJson());
@@ -3505,7 +3516,6 @@ service /fhir/r4/SubstanceProtein on new fhirr4:Listener(config = r4_api_config:
         return <SubstanceProtein|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, SubstanceProtein substanceprotein) returns SubstanceProtein|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("SubstanceProtein", substanceprotein.toJson());
@@ -3569,7 +3579,6 @@ service /fhir/r4/BodyStructure on new fhirr4:Listener(config = r4_api_config:bod
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, BodyStructure, "BodyStructure");
         return <BodyStructure|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, BodyStructure bodystructure) returns BodyStructure|r4:OperationOutcome|r4:FHIRError {
@@ -3699,7 +3708,6 @@ service /fhir/r4/Contract on new fhirr4:Listener(config = r4_api_config:contract
         return <Contract|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Contract contract) returns Contract|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("Contract", contract.toJson());
@@ -3764,7 +3772,6 @@ service /fhir/r4/Person on new fhirr4:Listener(config = r4_api_config:personApiC
         return <Person|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Person person) returns Person|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("Person", person.toJson());
@@ -3828,7 +3835,6 @@ service /fhir/r4/RiskAssessment on new fhirr4:Listener(config = r4_api_config:ri
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, RiskAssessment, "RiskAssessment");
         return <RiskAssessment|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, RiskAssessment riskassessment) returns RiskAssessment|r4:OperationOutcome|r4:FHIRError {
@@ -3899,7 +3905,6 @@ service /fhir/r4/Group on new fhirr4:Listener(config = r4_api_config:groupApiCon
         return <Group|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Group group) returns Group|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("Group", group.toJson());
@@ -3963,7 +3968,6 @@ service /fhir/r4/ResearchDefinition on new fhirr4:Listener(config = r4_api_confi
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, ResearchDefinition, "ResearchDefinition");
         return <ResearchDefinition|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ResearchDefinition researchdefinition) returns ResearchDefinition|r4:OperationOutcome|r4:FHIRError {
@@ -4029,7 +4033,6 @@ service /fhir/r4/PaymentNotice on new fhirr4:Listener(config = r4_api_config:pay
         return <PaymentNotice|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, PaymentNotice paymentnotice) returns PaymentNotice|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("PaymentNotice", paymentnotice.toJson());
@@ -4093,7 +4096,6 @@ service /fhir/r4/MedicinalProductManufactured on new fhirr4:Listener(config = r4
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, MedicinalProductManufactured, "MedicinalProductManufactured");
         return <MedicinalProductManufactured|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MedicinalProductManufactured medicinalproductmanufactured) returns MedicinalProductManufactured|r4:OperationOutcome|r4:FHIRError {
@@ -4159,7 +4161,6 @@ service /fhir/r4/Organization on new fhirr4:Listener(config = r4_api_config:orga
         return <Organization|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Organization organization) returns Organization|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("Organization", organization.toJson());
@@ -4223,7 +4224,6 @@ service /fhir/r4/ImplementationGuide on new fhirr4:Listener(config = r4_api_conf
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, ImplementationGuide, "ImplementationGuide");
         return <ImplementationGuide|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ImplementationGuide implementationguide) returns ImplementationGuide|r4:OperationOutcome|r4:FHIRError {
@@ -4289,7 +4289,6 @@ service /fhir/r4/CareTeam on new fhirr4:Listener(config = r4_api_config:careteam
         return <CareTeam|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, CareTeam careteam) returns CareTeam|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("CareTeam", careteam.toJson());
@@ -4353,7 +4352,6 @@ service /fhir/r4/ImagingStudy on new fhirr4:Listener(config = r4_api_config:imag
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, ImagingStudy, "ImagingStudy");
         return <ImagingStudy|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ImagingStudy imagingstudy) returns ImagingStudy|r4:OperationOutcome|r4:FHIRError {
@@ -4419,7 +4417,6 @@ service /fhir/r4/FamilyMemberHistory on new fhirr4:Listener(config = r4_api_conf
         return <FamilyMemberHistory|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, FamilyMemberHistory familymemberhistory) returns FamilyMemberHistory|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("FamilyMemberHistory", familymemberhistory.toJson());
@@ -4483,7 +4480,6 @@ service /fhir/r4/ChargeItem on new fhirr4:Listener(config = r4_api_config:charge
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, ChargeItem, "ChargeItem");
         return <ChargeItem|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ChargeItem chargeitem) returns ChargeItem|r4:OperationOutcome|r4:FHIRError {
@@ -4549,7 +4545,6 @@ service /fhir/r4/ResearchElementDefinition on new fhirr4:Listener(config = r4_ap
         return <ResearchElementDefinition|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ResearchElementDefinition researchelementdefinition) returns ResearchElementDefinition|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("ResearchElementDefinition", researchelementdefinition.toJson());
@@ -4614,7 +4609,6 @@ service /fhir/r4/ObservationDefinition on new fhirr4:Listener(config = r4_api_co
         return <ObservationDefinition|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ObservationDefinition observationdefinition) returns ObservationDefinition|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("ObservationDefinition", observationdefinition.toJson());
@@ -4678,7 +4672,6 @@ service /fhir/r4/SubstanceSpecification on new fhirr4:Listener(config = r4_api_c
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, SubstanceSpecification, "SubstanceSpecification");
         return <SubstanceSpecification|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, SubstanceSpecification substancespecification) returns SubstanceSpecification|r4:OperationOutcome|r4:FHIRError {
@@ -4750,7 +4743,6 @@ service /fhir/r4/Encounter on new fhirr4:Listener(config = r4_api_config:encount
         return <Encounter|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Encounter encounter) returns Encounter|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("Encounter", encounter.toJson());
@@ -4812,7 +4804,6 @@ service /fhir/r4/Substance on new fhirr4:Listener(config = r4_api_config:substan
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, Substance, "Substance");
         return <Substance|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Substance substance) returns Substance|r4:OperationOutcome|r4:FHIRError {
@@ -4880,7 +4871,6 @@ service /fhir/r4/SearchParameter on new fhirr4:Listener(config = r4_api_config:s
     //     return result;
     // }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, SearchParameter searchparameter) returns SearchParameter|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("SearchParameter", searchparameter.toJson());
@@ -4944,7 +4934,6 @@ service /fhir/r4/Communication on new fhirr4:Listener(config = r4_api_config:com
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, Communication, "Communication");
         return <Communication|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Communication communication) returns Communication|r4:OperationOutcome|r4:FHIRError {
@@ -5010,7 +4999,6 @@ service /fhir/r4/InsurancePlan on new fhirr4:Listener(config = r4_api_config:ins
         return <InsurancePlan|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, InsurancePlan insuranceplan) returns InsurancePlan|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("InsurancePlan", insuranceplan.toJson());
@@ -5074,7 +5062,6 @@ service /fhir/r4/ActivityDefinition on new fhirr4:Listener(config = r4_api_confi
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, ActivityDefinition, "ActivityDefinition");
         return <ActivityDefinition|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ActivityDefinition activitydefinition) returns ActivityDefinition|r4:OperationOutcome|r4:FHIRError {
@@ -5140,7 +5127,6 @@ service /fhir/r4/Linkage on new fhirr4:Listener(config = r4_api_config:linkageAp
         return <Linkage|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Linkage linkage) returns Linkage|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("Linkage", linkage.toJson());
@@ -5204,7 +5190,6 @@ service /fhir/r4/SubstanceSourceMaterial on new fhirr4:Listener(config = r4_api_
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, SubstanceSourceMaterial, "SubstanceSourceMaterial");
         return <SubstanceSourceMaterial|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, SubstanceSourceMaterial substancesourcematerial) returns SubstanceSourceMaterial|r4:OperationOutcome|r4:FHIRError {
@@ -5270,7 +5255,6 @@ service /fhir/r4/ImmunizationEvaluation on new fhirr4:Listener(config = r4_api_c
         return <ImmunizationEvaluation|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ImmunizationEvaluation immunizationevaluation) returns ImmunizationEvaluation|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("ImmunizationEvaluation", immunizationevaluation.toJson());
@@ -5334,7 +5318,6 @@ service /fhir/r4/DeviceUseStatement on new fhirr4:Listener(config = r4_api_confi
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, DeviceUseStatement, "DeviceUseStatement");
         return <DeviceUseStatement|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, DeviceUseStatement deviceusestatement) returns DeviceUseStatement|r4:OperationOutcome|r4:FHIRError {
@@ -5400,7 +5383,6 @@ service /fhir/r4/RequestGroup on new fhirr4:Listener(config = r4_api_config:requ
         return <RequestGroup|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, RequestGroup requestgroup) returns RequestGroup|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("RequestGroup", requestgroup.toJson());
@@ -5465,7 +5447,6 @@ service /fhir/r4/MessageHeader on new fhirr4:Listener(config = r4_api_config:mes
         return <MessageHeader|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MessageHeader messageheader) returns MessageHeader|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("MessageHeader", messageheader.toJson());
@@ -5529,7 +5510,6 @@ service /fhir/r4/DeviceRequest on new fhirr4:Listener(config = r4_api_config:dev
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, DeviceRequest, "DeviceRequest");
         return <DeviceRequest|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, DeviceRequest devicerequest) returns DeviceRequest|r4:OperationOutcome|r4:FHIRError {
@@ -5659,7 +5639,6 @@ service /fhir/r4/Task on new fhirr4:Listener(config = r4_api_config:taskApiConfi
         return <Task|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Task task) returns Task|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("Task", task.toJson());
@@ -5723,7 +5702,6 @@ service /fhir/r4/Provenance on new fhirr4:Listener(config = r4_api_config:proven
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, Provenance, "Provenance");
         return <Provenance|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Provenance provenance) returns Provenance|r4:OperationOutcome|r4:FHIRError {
@@ -5789,7 +5767,6 @@ service /fhir/r4/Questionnaire on new fhirr4:Listener(config = r4_api_config:que
         return <Questionnaire|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Questionnaire questionnaire) returns Questionnaire|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("Questionnaire", questionnaire.toJson());
@@ -5853,7 +5830,6 @@ service /fhir/r4/ExplanationOfBenefit on new fhirr4:Listener(config = r4_api_con
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, ExplanationOfBenefit, "ExplanationOfBenefit");
         return <ExplanationOfBenefit|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ExplanationOfBenefit explanationofbenefit) returns ExplanationOfBenefit|r4:OperationOutcome|r4:FHIRError {
@@ -5919,7 +5895,6 @@ service /fhir/r4/MedicinalProductPharmaceutical on new fhirr4:Listener(config = 
         return <MedicinalProductPharmaceutical|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MedicinalProductPharmaceutical medicinalproductpharmaceutical) returns MedicinalProductPharmaceutical|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("MedicinalProductPharmaceutical", medicinalproductpharmaceutical.toJson());
@@ -5983,7 +5958,6 @@ service /fhir/r4/ResearchStudy on new fhirr4:Listener(config = r4_api_config:res
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, ResearchStudy, "ResearchStudy");
         return <ResearchStudy|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ResearchStudy researchstudy) returns ResearchStudy|r4:OperationOutcome|r4:FHIRError {
@@ -6049,7 +6023,6 @@ service /fhir/r4/Specimen on new fhirr4:Listener(config = r4_api_config:specimen
         return <Specimen|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Specimen specimen) returns Specimen|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("Specimen", specimen.toJson());
@@ -6113,7 +6086,6 @@ service /fhir/r4/CarePlan on new fhirr4:Listener(config = r4_api_config:careplan
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, CarePlan, "CarePlan");
         return <CarePlan|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, CarePlan careplan) returns CarePlan|r4:OperationOutcome|r4:FHIRError {
@@ -6179,7 +6151,6 @@ service /fhir/r4/AllergyIntolerance on new fhirr4:Listener(config = r4_api_confi
         return <AllergyIntolerance|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, AllergyIntolerance allergyintolerance) returns AllergyIntolerance|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("AllergyIntolerance", allergyintolerance.toJson());
@@ -6241,24 +6212,24 @@ service /fhir/r4/StructureDefinition on new fhirr4:Listener(config = r4_api_conf
     resource function post .(r4:FHIRContext fhirContext, StructureDefinition structuredefinition) returns StructureDefinition|r4:OperationOutcome|r4:FHIRError {
         do {
             any|r4:OperationOutcome|r4:FHIRError createResult = performResourceCreate("StructureDefinition", structuredefinition.toJson());
-            
+
             if createResult is r4:OperationOutcome || createResult is r4:FHIRError {
                 return createResult;
             }
-            
+
             json structDefJson = structuredefinition.toJson();
             string? customUrl = check structDefJson.url.ensureType(string);
             string? resourceType = check structDefJson.'type.ensureType(string);
-            
+
             if customUrl is string && resourceType is string {
                 log:printInfo(string `Registering profile in FHIR registry: ${customUrl} for ${resourceType}`);
-                
+
                 readonly & r4:Profile customProfile = {
                     url: customUrl,
                     resourceType: resourceType,
                     modelType: json
                 }.cloneReadOnly();
-                
+
                 readonly & r4:IGInfoRecord customIG = {
                     title: "Custom Profiles IG",
                     name: "custom-profiles",
@@ -6271,26 +6242,26 @@ service /fhir/r4/StructureDefinition on new fhirr4:Listener(config = r4_api_conf
                     },
                     searchParameters: []
                 }.cloneReadOnly();
-                
-                r4:FHIRImplementationGuide ig = new(customIG);
+
+                r4:FHIRImplementationGuide ig = new (customIG);
                 r4:FHIRError? regResult = r4:fhirRegistry.addImplementationGuide(ig);
-                
+
                 if regResult is r4:FHIRError {
                     log:printWarn(string `Failed to register profile in registry: ${regResult.message()}`);
                 } else {
                     log:printInfo(string `Successfully registered profile: ${customUrl}`);
                 }
             }
-            
+
             return <StructureDefinition>createResult;
-            
+
         } on fail error e {
             log:printError(string `Error creating StructureDefinition: ${e.message()}`);
             return r4:createFHIRError(
-                string `Failed to create StructureDefinition: ${e.message()}`,
-                r4:ERROR,
-                r4:PROCESSING,
-                httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR
+                    string `Failed to create StructureDefinition: ${e.message()}`,
+                    r4:ERROR,
+                    r4:PROCESSING,
+                    httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR
             );
         }
     }
@@ -6351,7 +6322,6 @@ service /fhir/r4/ChargeItemDefinition on new fhirr4:Listener(config = r4_api_con
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, ChargeItemDefinition, "ChargeItemDefinition");
         return <ChargeItemDefinition|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ChargeItemDefinition chargeitemdefinition) returns ChargeItemDefinition|r4:OperationOutcome|r4:FHIRError {
@@ -6421,7 +6391,6 @@ service /fhir/r4/EpisodeOfCare on new fhirr4:Listener(config = r4_api_config:epi
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, EpisodeOfCare, "EpisodeOfCare");
         return <EpisodeOfCare|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, EpisodeOfCare episodeofcare) returns EpisodeOfCare|r4:OperationOutcome|r4:FHIRError {
@@ -6551,7 +6520,6 @@ service /fhir/r4/List on new fhirr4:Listener(config = r4_api_config:listApiConfi
         return <List|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, List list) returns List|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("List", list.toJson());
@@ -6615,7 +6583,6 @@ service /fhir/r4/ConceptMap on new fhirr4:Listener(config = r4_api_config:concep
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, ConceptMap, "ConceptMap");
         return <ConceptMap|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ConceptMap conceptmap) returns ConceptMap|r4:OperationOutcome|r4:FHIRError {
@@ -6681,7 +6648,6 @@ service /fhir/r4/OperationDefinition on new fhirr4:Listener(config = r4_api_conf
         return <OperationDefinition|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, OperationDefinition operationdefinition) returns OperationDefinition|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("OperationDefinition", operationdefinition.toJson());
@@ -6745,7 +6711,6 @@ service /fhir/r4/Immunization on new fhirr4:Listener(config = r4_api_config:immu
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, Immunization, "Immunization");
         return <Immunization|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Immunization immunization) returns Immunization|r4:OperationOutcome|r4:FHIRError {
@@ -6811,7 +6776,6 @@ service /fhir/r4/MedicationRequest on new fhirr4:Listener(config = r4_api_config
         return <MedicationRequest|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MedicationRequest medicationrequest) returns MedicationRequest|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("MedicationRequest", medicationrequest.toJson());
@@ -6876,7 +6840,6 @@ service /fhir/r4/EffectEvidenceSynthesis on new fhirr4:Listener(config = r4_api_
         return <EffectEvidenceSynthesis|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, EffectEvidenceSynthesis effectevidencesynthesis) returns EffectEvidenceSynthesis|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("EffectEvidenceSynthesis", effectevidencesynthesis.toJson());
@@ -6940,7 +6903,6 @@ service /fhir/r4/BiologicallyDerivedProduct on new fhirr4:Listener(config = r4_a
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, BiologicallyDerivedProduct, "BiologicallyDerivedProduct");
         return <BiologicallyDerivedProduct|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, BiologicallyDerivedProduct biologicallyderivedproduct) returns BiologicallyDerivedProduct|r4:OperationOutcome|r4:FHIRError {
@@ -7070,7 +7032,6 @@ service /fhir/r4/VisionPrescription on new fhirr4:Listener(config = r4_api_confi
         return <VisionPrescription|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, VisionPrescription visionprescription) returns VisionPrescription|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("VisionPrescription", visionprescription.toJson());
@@ -7134,7 +7095,6 @@ service /fhir/r4/Media on new fhirr4:Listener(config = r4_api_config:mediaApiCon
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, Media, "Media");
         return <Media|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Media media) returns Media|r4:OperationOutcome|r4:FHIRError {
@@ -7200,7 +7160,6 @@ service /fhir/r4/MedicinalProductContraindication on new fhirr4:Listener(config 
         return <MedicinalProductContraindication|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MedicinalProductContraindication medicinalproductcontraindication) returns MedicinalProductContraindication|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("MedicinalProductContraindication", medicinalproductcontraindication.toJson());
@@ -7265,7 +7224,6 @@ service /fhir/r4/EvidenceVariable on new fhirr4:Listener(config = r4_api_config:
         return <EvidenceVariable|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, EvidenceVariable evidencevariable) returns EvidenceVariable|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("EvidenceVariable", evidencevariable.toJson());
@@ -7329,7 +7287,6 @@ service /fhir/r4/MolecularSequence on new fhirr4:Listener(config = r4_api_config
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, MolecularSequence, "MolecularSequence");
         return <MolecularSequence|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MolecularSequence molecularsequence) returns MolecularSequence|r4:OperationOutcome|r4:FHIRError {
@@ -7400,7 +7357,6 @@ service /fhir/r4/MedicinalProduct on new fhirr4:Listener(config = r4_api_config:
         return <MedicinalProduct|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MedicinalProduct medicinalproduct) returns MedicinalProduct|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("MedicinalProduct", medicinalproduct.toJson());
@@ -7464,7 +7420,6 @@ service /fhir/r4/DeviceMetric on new fhirr4:Listener(config = r4_api_config:devi
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, DeviceMetric, "DeviceMetric");
         return <DeviceMetric|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, DeviceMetric devicemetric) returns DeviceMetric|r4:OperationOutcome|r4:FHIRError {
@@ -7530,7 +7485,6 @@ service /fhir/r4/Flag on new fhirr4:Listener(config = r4_api_config:flagApiConfi
         return <Flag|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Flag flag) returns Flag|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("Flag", flag.toJson());
@@ -7594,7 +7548,6 @@ service /fhir/r4/SubstanceNucleicAcid on new fhirr4:Listener(config = r4_api_con
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, SubstanceNucleicAcid, "SubstanceNucleicAcid");
         return <SubstanceNucleicAcid|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, SubstanceNucleicAcid substancenucleicacid) returns SubstanceNucleicAcid|r4:OperationOutcome|r4:FHIRError {
@@ -7660,7 +7613,6 @@ service /fhir/r4/RiskEvidenceSynthesis on new fhirr4:Listener(config = r4_api_co
         return <RiskEvidenceSynthesis|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, RiskEvidenceSynthesis riskevidencesynthesis) returns RiskEvidenceSynthesis|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("RiskEvidenceSynthesis", riskevidencesynthesis.toJson());
@@ -7724,7 +7676,6 @@ service /fhir/r4/AppointmentResponse on new fhirr4:Listener(config = r4_api_conf
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, AppointmentResponse, "AppointmentResponse");
         return <AppointmentResponse|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, AppointmentResponse appointmentresponse) returns AppointmentResponse|r4:OperationOutcome|r4:FHIRError {
@@ -7790,7 +7741,6 @@ service /fhir/r4/StructureMap on new fhirr4:Listener(config = r4_api_config:stru
         return <StructureMap|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, StructureMap structuremap) returns StructureMap|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("StructureMap", structuremap.toJson());
@@ -7855,7 +7805,6 @@ service /fhir/r4/AdverseEvent on new fhirr4:Listener(config = r4_api_config:adve
         return <AdverseEvent|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, AdverseEvent adverseevent) returns AdverseEvent|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("AdverseEvent", adverseevent.toJson());
@@ -7919,7 +7868,6 @@ service /fhir/r4/GuidanceResponse on new fhirr4:Listener(config = r4_api_config:
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, GuidanceResponse, "GuidanceResponse");
         return <GuidanceResponse|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, GuidanceResponse guidanceresponse) returns GuidanceResponse|r4:OperationOutcome|r4:FHIRError {
@@ -8049,7 +7997,6 @@ service /fhir/r4/MedicationAdministration on new fhirr4:Listener(config = r4_api
         return <MedicationAdministration|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MedicationAdministration medicationadministration) returns MedicationAdministration|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("MedicationAdministration", medicationadministration.toJson());
@@ -8113,7 +8060,6 @@ service /fhir/r4/EnrollmentResponse on new fhirr4:Listener(config = r4_api_confi
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, EnrollmentResponse, "EnrollmentResponse");
         return <EnrollmentResponse|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, EnrollmentResponse enrollmentresponse) returns EnrollmentResponse|r4:OperationOutcome|r4:FHIRError {
@@ -8179,7 +8125,6 @@ service /fhir/r4/Library on new fhirr4:Listener(config = r4_api_config:libraryAp
         return <Library|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Library library) returns Library|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("Library", library.toJson());
@@ -8243,7 +8188,6 @@ service /fhir/r4/Binary on new fhirr4:Listener(config = r4_api_config:binaryApiC
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, Binary, "Binary");
         return <Binary|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Binary binary) returns Binary|r4:OperationOutcome|r4:FHIRError {
@@ -8309,7 +8253,6 @@ service /fhir/r4/MedicinalProductInteraction on new fhirr4:Listener(config = r4_
         return <MedicinalProductInteraction|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MedicinalProductInteraction medicinalproductinteraction) returns MedicinalProductInteraction|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("MedicinalProductInteraction", medicinalproductinteraction.toJson());
@@ -8373,7 +8316,6 @@ service /fhir/r4/MedicationStatement on new fhirr4:Listener(config = r4_api_conf
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, MedicationStatement, "MedicationStatement");
         return <MedicationStatement|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MedicationStatement medicationstatement) returns MedicationStatement|r4:OperationOutcome|r4:FHIRError {
@@ -8439,7 +8381,6 @@ service /fhir/r4/CommunicationRequest on new fhirr4:Listener(config = r4_api_con
         return <CommunicationRequest|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, CommunicationRequest communicationrequest) returns CommunicationRequest|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("CommunicationRequest", communicationrequest.toJson());
@@ -8503,7 +8444,6 @@ service /fhir/r4/TestScript on new fhirr4:Listener(config = r4_api_config:testsc
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, TestScript, "TestScript");
         return <TestScript|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, TestScript testscript) returns TestScript|r4:OperationOutcome|r4:FHIRError {
@@ -8569,7 +8509,6 @@ service /fhir/r4/SubstancePolymer on new fhirr4:Listener(config = r4_api_config:
         return <SubstancePolymer|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, SubstancePolymer substancepolymer) returns SubstancePolymer|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("SubstancePolymer", substancepolymer.toJson());
@@ -8633,7 +8572,6 @@ service /fhir/r4/Basic on new fhirr4:Listener(config = r4_api_config:basicApiCon
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, Basic, "Basic");
         return <Basic|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Basic basic) returns Basic|r4:OperationOutcome|r4:FHIRError {
@@ -8699,7 +8637,6 @@ service /fhir/r4/TestReport on new fhirr4:Listener(config = r4_api_config:testre
         return <TestReport|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, TestReport testreport) returns TestReport|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("TestReport", testreport.toJson());
@@ -8763,7 +8700,6 @@ service /fhir/r4/ClaimResponse on new fhirr4:Listener(config = r4_api_config:cla
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, ClaimResponse, "ClaimResponse");
         return <ClaimResponse|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ClaimResponse claimresponse) returns ClaimResponse|r4:OperationOutcome|r4:FHIRError {
@@ -8829,7 +8765,6 @@ service /fhir/r4/MedicationDispense on new fhirr4:Listener(config = r4_api_confi
         return <MedicationDispense|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MedicationDispense medicationdispense) returns MedicationDispense|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("MedicationDispense", medicationdispense.toJson());
@@ -8894,7 +8829,6 @@ service /fhir/r4/DiagnosticReport on new fhirr4:Listener(config = r4_api_config:
         return <DiagnosticReport|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, DiagnosticReport diagnosticreport) returns DiagnosticReport|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("DiagnosticReport", diagnosticreport.toJson());
@@ -8958,7 +8892,6 @@ service /fhir/r4/OrganizationAffiliation on new fhirr4:Listener(config = r4_api_
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, OrganizationAffiliation, "OrganizationAffiliation");
         return <OrganizationAffiliation|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, OrganizationAffiliation organizationaffiliation) returns OrganizationAffiliation|r4:OperationOutcome|r4:FHIRError {
@@ -9088,7 +9021,6 @@ service /fhir/r4/MedicinalProductIndication on new fhirr4:Listener(config = r4_a
         return <MedicinalProductIndication|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MedicinalProductIndication medicinalproductindication) returns MedicinalProductIndication|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("MedicinalProductIndication", medicinalproductindication.toJson());
@@ -9152,7 +9084,6 @@ service /fhir/r4/NutritionOrder on new fhirr4:Listener(config = r4_api_config:nu
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, NutritionOrder, "NutritionOrder");
         return <NutritionOrder|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, NutritionOrder nutritionorder) returns NutritionOrder|r4:OperationOutcome|r4:FHIRError {
@@ -9218,7 +9149,6 @@ service /fhir/r4/TerminologyCapabilities on new fhirr4:Listener(config = r4_api_
         return <TerminologyCapabilities|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, TerminologyCapabilities terminologycapabilities) returns TerminologyCapabilities|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("TerminologyCapabilities", terminologycapabilities.toJson());
@@ -9282,7 +9212,6 @@ service /fhir/r4/Evidence on new fhirr4:Listener(config = r4_api_config:evidence
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, Evidence, "Evidence");
         return <Evidence|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Evidence evidence) returns Evidence|r4:OperationOutcome|r4:FHIRError {
@@ -9348,7 +9277,6 @@ service /fhir/r4/AuditEvent on new fhirr4:Listener(config = r4_api_config:audite
         return <AuditEvent|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, AuditEvent auditevent) returns AuditEvent|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("AuditEvent", auditevent.toJson());
@@ -9412,7 +9340,6 @@ service /fhir/r4/PaymentReconciliation on new fhirr4:Listener(config = r4_api_co
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, PaymentReconciliation, "PaymentReconciliation");
         return <PaymentReconciliation|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, PaymentReconciliation paymentreconciliation) returns PaymentReconciliation|r4:OperationOutcome|r4:FHIRError {
@@ -9542,7 +9469,6 @@ service /fhir/r4/SpecimenDefinition on new fhirr4:Listener(config = r4_api_confi
         return <SpecimenDefinition|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, SpecimenDefinition specimendefinition) returns SpecimenDefinition|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("SpecimenDefinition", specimendefinition.toJson());
@@ -9606,7 +9532,6 @@ service /fhir/r4/Composition on new fhirr4:Listener(config = r4_api_config:compo
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, Composition, "Composition");
         return <Composition|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Composition composition) returns Composition|r4:OperationOutcome|r4:FHIRError {
@@ -9672,7 +9597,6 @@ service /fhir/r4/DetectedIssue on new fhirr4:Listener(config = r4_api_config:det
         return <DetectedIssue|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, DetectedIssue detectedissue) returns DetectedIssue|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("DetectedIssue", detectedissue.toJson());
@@ -9737,7 +9661,6 @@ service /fhir/r4/CompartmentDefinition on new fhirr4:Listener(config = r4_api_co
         return <CompartmentDefinition|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, CompartmentDefinition compartmentdefinition) returns CompartmentDefinition|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("CompartmentDefinition", compartmentdefinition.toJson());
@@ -9801,7 +9724,6 @@ service /fhir/r4/MedicinalProductIngredient on new fhirr4:Listener(config = r4_a
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, MedicinalProductIngredient, "MedicinalProductIngredient");
         return <MedicinalProductIngredient|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MedicinalProductIngredient medicinalproductingredient) returns MedicinalProductIngredient|r4:OperationOutcome|r4:FHIRError {
@@ -9870,7 +9792,6 @@ service /fhir/r4/MedicationKnowledge on new fhirr4:Listener(config = r4_api_conf
         }
         return result;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MedicationKnowledge medicationknowledge) returns MedicationKnowledge|r4:OperationOutcome|r4:FHIRError {
@@ -10021,7 +9942,6 @@ service /fhir/r4/Coverage on new fhirr4:Listener(config = r4_api_config:coverage
         return <Coverage|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Coverage coverage) returns Coverage|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("Coverage", coverage.toJson());
@@ -10085,7 +10005,6 @@ service /fhir/r4/QuestionnaireResponse on new fhirr4:Listener(config = r4_api_co
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, QuestionnaireResponse, "QuestionnaireResponse");
         return <QuestionnaireResponse|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, QuestionnaireResponse questionnaireresponse) returns QuestionnaireResponse|r4:OperationOutcome|r4:FHIRError {
@@ -10151,7 +10070,6 @@ service /fhir/r4/CoverageEligibilityRequest on new fhirr4:Listener(config = r4_a
         return <CoverageEligibilityRequest|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, CoverageEligibilityRequest coverageeligibilityrequest) returns CoverageEligibilityRequest|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("CoverageEligibilityRequest", coverageeligibilityrequest.toJson());
@@ -10215,7 +10133,6 @@ service /fhir/r4/NamingSystem on new fhirr4:Listener(config = r4_api_config:nami
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, NamingSystem, "NamingSystem");
         return <NamingSystem|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, NamingSystem namingsystem) returns NamingSystem|r4:OperationOutcome|r4:FHIRError {
@@ -10281,7 +10198,6 @@ service /fhir/r4/MedicinalProductUndesirableEffect on new fhirr4:Listener(config
         return <MedicinalProductUndesirableEffect|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MedicinalProductUndesirableEffect medicinalproductundesirableeffect) returns MedicinalProductUndesirableEffect|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("MedicinalProductUndesirableEffect", medicinalproductundesirableeffect.toJson());
@@ -10345,7 +10261,6 @@ service /fhir/r4/ExampleScenario on new fhirr4:Listener(config = r4_api_config:e
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, ExampleScenario, "ExampleScenario");
         return <ExampleScenario|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ExampleScenario examplescenario) returns ExampleScenario|r4:OperationOutcome|r4:FHIRError {
@@ -10411,7 +10326,6 @@ service /fhir/r4/SupplyDelivery on new fhirr4:Listener(config = r4_api_config:su
         return <SupplyDelivery|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, SupplyDelivery supplydelivery) returns SupplyDelivery|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("SupplyDelivery", supplydelivery.toJson());
@@ -10475,7 +10389,6 @@ service /fhir/r4/Schedule on new fhirr4:Listener(config = r4_api_config:schedule
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, Schedule, "Schedule");
         return <Schedule|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Schedule schedule) returns Schedule|r4:OperationOutcome|r4:FHIRError {
@@ -10541,7 +10454,6 @@ service /fhir/r4/DeviceDefinition on new fhirr4:Listener(config = r4_api_config:
         return <DeviceDefinition|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, DeviceDefinition devicedefinition) returns DeviceDefinition|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("DeviceDefinition", devicedefinition.toJson());
@@ -10605,7 +10517,6 @@ service /fhir/r4/ClinicalImpression on new fhirr4:Listener(config = r4_api_confi
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, ClinicalImpression, "ClinicalImpression");
         return <ClinicalImpression|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, ClinicalImpression clinicalimpression) returns ClinicalImpression|r4:OperationOutcome|r4:FHIRError {
@@ -10671,7 +10582,6 @@ service /fhir/r4/PlanDefinition on new fhirr4:Listener(config = r4_api_config:pl
         return <PlanDefinition|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, PlanDefinition plandefinition) returns PlanDefinition|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("PlanDefinition", plandefinition.toJson());
@@ -10736,7 +10646,6 @@ service /fhir/r4/MedicinalProductAuthorization on new fhirr4:Listener(config = r
         return <MedicinalProductAuthorization|r4:OperationOutcome|r4:FHIRError>converted;
     }
 
-
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, MedicinalProductAuthorization medicinalproductauthorization) returns MedicinalProductAuthorization|r4:OperationOutcome|r4:FHIRError {
         any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("MedicinalProductAuthorization", medicinalproductauthorization.toJson());
@@ -10800,7 +10709,6 @@ service /fhir/r4/Claim on new fhirr4:Listener(config = r4_api_config:claimApiCon
         anydata|r4:OperationOutcome|r4:FHIRError converted = convertToTypedResource(result, Claim, "Claim");
         return <Claim|r4:OperationOutcome|r4:FHIRError>converted;
     }
-
 
     // Create a new resource.
     isolated resource function post .(r4:FHIRContext fhirContext, Claim claim) returns Claim|r4:OperationOutcome|r4:FHIRError {
