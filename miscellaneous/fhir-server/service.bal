@@ -758,7 +758,7 @@ isolated function performResourceCreate(string resourceType, json resourceJson) 
             }
 
             // Otherwise it's a server/database error
-            return r4:createFHIRError(errorMsg, r4:ERROR, r4:PROCESSING, httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR);
+            return r4:createFHIRError("Internal server error", r4:ERROR, r4:PROCESSING, httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR);
         }
     } on fail error e {
         log:printError(string `Error processing ${resourceType}: ${e.message()}`);
