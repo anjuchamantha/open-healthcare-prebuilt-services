@@ -121,7 +121,7 @@ public class CreateHandler {
             log:printDebug(string `Committing transaction for ${resourceType}/${resourceId}`);
             self.transactionHandler.commitTransaction('transaction, resourceType, resourceId);
 
-            log:printInfo(string `Successfully created ${resourceType}/${resourceId} with ${references.length()} reference(s)`);
+            log:printDebug(string `Successfully created ${resourceType}/${resourceId} with ${references.length()} reference(s)`);
             return resourceId;
 
         } on fail error e {

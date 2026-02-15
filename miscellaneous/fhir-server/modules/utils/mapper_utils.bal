@@ -57,8 +57,19 @@ public isolated function parseDateString(string dateStr) returns time:Date|error
         return error("Date string is empty");
     }
     
+    // If the string contains time component (T or space followed by time), extract only date part
+    string datePart = dateStr;
+    if dateStr.includes("T") {
+        // ISO 8601 format: 2025-04-24T00:03:08.000Z
+        string[] splitByT = re `T`.split(dateStr);
+        datePart = splitByT[0];
+    } else if dateStr.includes(" ") && dateStr.length() > 10 {
+        // SQL format: 2025-04-24 00:03:08.000
+        datePart = dateStr.substring(0, 10);
+    }
+    
     // Parse date string "YYYY-MM-DD" into components
-    string[] parts = re `-`.split(dateStr);
+    string[] parts = re `-`.split(datePart);
     if parts.length() != 3 {
         return error(string `Invalid date format: ${dateStr}. Expected YYYY-MM-DD`);
     }
