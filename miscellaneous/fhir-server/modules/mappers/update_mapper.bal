@@ -86,7 +86,7 @@ public class UpdateMapper {
             // Determine field type based on parameter name patterns
             if searchParam.endsWith("date") || searchParam == "period" || 
                searchParam == "effective" || searchParam == "authored" || 
-               searchParam == "created" || searchParam == "started" {
+               searchParam == "created" || searchParam == "started" || searchParam == "issued" {
                 // Handle date fields
                 string valueStr = value.toString();
                 if valueStr.trim().length() > 0 {
@@ -95,10 +95,12 @@ public class UpdateMapper {
                     if dateResult is time:Date {
                         updateRecord[dbColumn] = dateResult;
                     } else {
-                        // If not a simple date, might be a civil datetime
+                        // If not a simple date, parse as datetime and extract date part
                         time:Civil|error civilResult = time:civilFromString(valueStr);
                         if civilResult is time:Civil {
-                            updateRecord[dbColumn] = civilResult;
+                            // Extract only the date part for DATE columns
+                            time:Date extractedDate = {year: civilResult.year, month: civilResult.month, day: civilResult.day};
+                            updateRecord[dbColumn] = extractedDate;
                         } else {
                             updateRecord[dbColumn] = ();
                         }
