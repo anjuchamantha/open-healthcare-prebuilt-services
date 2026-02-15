@@ -84,8 +84,8 @@ public class CreateMapper {
             
             // Determine field type based on parameter name patterns
             if searchParam.endsWith("date") || searchParam == "period" || 
-               searchParam == "effective" || searchParam == "authored" || 
-               searchParam == "created" || searchParam == "started" || searchParam == "issued" {
+               searchParam == "effective" || searchParam == "authored" || searchParam == "authoredon" || 
+               searchParam == "created" || searchParam == "started" || searchParam == "issued" || searchParam == "recorded" {
                 // Handle date fields
                 string valueStr = value.toString();
                 if valueStr.trim().length() > 0 {

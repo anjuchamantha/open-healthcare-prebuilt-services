@@ -373,6 +373,8 @@ function init() returns error? {
     if (profileLoadStatus is error) {
         log:printError("Failed to load custom profiles: " + profileLoadStatus.message());
     }
+
+    log:printInfo("FHIR Server started successfully");
 }
 
 listener http:Listener httpListener = http:getDefaultListener();
