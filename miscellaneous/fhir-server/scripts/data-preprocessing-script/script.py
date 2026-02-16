@@ -122,15 +122,21 @@ def replace_references(obj, uuid_map, identifier_map, parent_key=None, organizat
                 match = re.match(r'(\w+)\?identifier=([^|]+)\|(.+)', ref_value)
                 if match:
                     resource_type = match.group(1)
-                    identifier_value = match.group(3)
+                    identifier_url = match.group(2)  # The URL part before |
+                    identifier_value = match.group(3)  # The value after |
                     
-                    # Check if this identifier value maps to a UUID
-                    if identifier_value in identifier_map:
+                    # First, check if the identifier_value is already a UUID
+                    if is_uuid_format(identifier_value):
+                        # Use the UUID directly from the reference
+                        obj["reference"] = f"{resource_type}/{identifier_value}"
+                        print(f"  Replaced: {ref_value} -> {obj['reference']}")
+                    # Otherwise, check if this identifier value maps to a UUID in our map
+                    elif identifier_value in identifier_map:
                         mapped_resource_type, mapped_uuid = identifier_map[identifier_value]
                         obj["reference"] = f"{mapped_resource_type}/{mapped_uuid}"
                         print(f"  Replaced: {ref_value} -> {obj['reference']}")
                     else:
-                        # Identifier not found in map - remove the reference
+                        # Identifier not found in map and not a UUID - remove the reference
                         print(f"  Removing reference with unmapped identifier: {ref_value}")
                         return None
             # Check if reference starts with # (internal reference) - mark for removal
@@ -193,10 +199,10 @@ def replace_references(obj, uuid_map, identifier_map, parent_key=None, organizat
                 print(f"  Removed 'period' block")
                 continue
             
-            # Remove "valueCodeableConcept" from Observation resources
-            if is_observation and key == "valueCodeableConcept":
+            # Remove "valueCodeableConcept" and "valueString" from Observation resources
+            if is_observation and key in ["valueCodeableConcept", "valueString"]:
                 keys_to_delete.append(key)
-                print(f"  Removed 'valueCodeableConcept' from Observation")
+                print(f"  Removed '{key}' from Observation")
                 continue
             
             # Remove "additionalInstruction" from MedicationRequest.dosageInstruction
@@ -486,8 +492,8 @@ def main():
     print(f"Found {len(json_files)} JSON file(s) to process")
     
     # Create Organization file if it doesn't exist
-    print("\nChecking Organization resource...")
-    create_organization_file(script_dir)
+    # print("\nChecking Organization resource...")
+    # create_organization_file(script_dir)
     
     # Build global identifier mapping from all files
     global_identifier_map = build_global_identifier_map(json_files)
