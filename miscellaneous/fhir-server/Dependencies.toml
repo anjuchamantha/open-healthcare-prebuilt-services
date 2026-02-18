@@ -448,7 +448,7 @@ dependencies = [
 [[package]]
 org = "ballerinax"
 name = "health.fhir.r4"
-version = "6.2.3"
+version = "6.2.4"
 dependencies = [
 	{org = "ballerina", name = "constraint"},
 	{org = "ballerina", name = "http"},
@@ -548,7 +548,7 @@ modules = [
 [[package]]
 org = "ballerinax"
 name = "health.fhirr4"
-version = "3.0.2"
+version = "3.0.3"
 dependencies = [
 	{org = "ballerina", name = "http"},
 	{org = "ballerina", name = "io"},
@@ -557,6 +557,7 @@ dependencies = [
 	{org = "ballerina", name = "lang.regexp"},
 	{org = "ballerina", name = "log"},
 	{org = "ballerina", name = "time"},
+	{org = "ballerina", name = "url"},
 	{org = "ballerinai", name = "observe"},
 	{org = "ballerinax", name = "health.fhir.r4"},
 	{org = "ballerinax", name = "health.fhir.r4.international401"},

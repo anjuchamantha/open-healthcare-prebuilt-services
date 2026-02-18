@@ -531,9 +531,12 @@ isolated function performResourceSearch(string resourceType, r4:FHIRContext fhir
             queryParams[key] = paramValues;
         }
 
+        // Access pagination context
+        r4:PaginationContext? paginationContext = fhirContext.getPaginationContext();
+
         // Use ReadHandler to search resources
         handlers:ReadHandler readHandler = new handlers:ReadHandler();
-        json|error searchResult = readHandler.searchResources(jdbcClient, resourceType, queryParams);
+        json|error searchResult = readHandler.searchResources(jdbcClient, resourceType, queryParams, paginationContext);
 
         if searchResult is json {
             log:printInfo(string `${resourceType}: Search - Execution Success!`);
