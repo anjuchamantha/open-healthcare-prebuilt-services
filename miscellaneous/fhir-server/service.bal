@@ -378,6 +378,7 @@ function init() returns error? {
         log:printError("Failed to load custom profiles: " + profileLoadStatus.message());
     }
 
+    log:printInfo("FHIR Server started successfully");
     // Ensure Device/fhir-server exists for AuditEvent logging
     handlers:ReadHandler readHandler = new handlers:ReadHandler();
     json|error deviceResult = readHandler.readResource(jdbcClient, "Device", "fhir-server");
@@ -516,7 +517,7 @@ function loadCustomProfiles() returns error? {
 
 // Utility function to handle search operations for resources
 isolated function performResourceSearch(string resourceType, r4:FHIRContext fhirContext) returns r4:Bundle|r4:OperationOutcome|r4:FHIRError {
-    log:printInfo(string `${resourceType}: Search - Start Execution!`);
+    log:printDebug(string `${resourceType}: Search - Start Execution!`);
     do {
         // Access query parameters from FHIRContext
         map<r4:RequestSearchParameter[]> searchParams = fhirContext.getRequestSearchParameters();
@@ -536,7 +537,7 @@ isolated function performResourceSearch(string resourceType, r4:FHIRContext fhir
         json|error searchResult = readHandler.searchResources(jdbcClient, resourceType, queryParams);
 
         if searchResult is json {
-            log:printInfo(string `${resourceType}: Search - Execution Success!`);
+            log:printDebug(string `${resourceType}: Search - Execution Success!`);
             r4:Bundle bundle = check fhirParser:parse(searchResult).ensureType();
             return bundle;
         } else {
@@ -553,13 +554,13 @@ isolated function performResourceSearch(string resourceType, r4:FHIRContext fhir
 
 // Utility function to handle delete operations for resources
 isolated function performResourceDelete(string resourceType, string id) returns r4:OperationOutcome|r4:FHIRError {
-    log:printInfo(string `${resourceType}: Delete - Start Execution!`);
+    log:printDebug(string `${resourceType}: Delete - Start Execution!`);
     do {
         handlers:DeleteHandler deleteHandler = new handlers:DeleteHandler(jdbcClient);
         boolean|error result = deleteHandler.deleteResourceWithTransaction(resourceType, id);
 
         if result is boolean && result {
-            log:printInfo(string `${resourceType}: DELETE - Execution Success!`);
+            log:printDebug(string `${resourceType}: DELETE - Execution Success!`);
 
             return {
                 resourceType: "OperationOutcome",
@@ -591,7 +592,7 @@ isolated function performResourceDelete(string resourceType, string id) returns 
 
 // Utility function to handle resource history retrieval for a specific resource ID
 isolated function performResourceHistory(string resourceType, string id) returns r4:Bundle|r4:OperationOutcome|r4:FHIRError {
-    log:printInfo(string `${resourceType}: History - Start Execution for ID: ${id}`);
+    log:printDebug(string `${resourceType}: History - Start Execution for ID: ${id}`);
     do {
         handlers:HistoryHandler historyHandler = new handlers:HistoryHandler(jdbcClient);
         map<json>[]|error result = historyHandler.getResourceHistory(resourceType, id);
@@ -629,7 +630,7 @@ isolated function performResourceHistory(string resourceType, string id) returns
                 entry: entries
             };
 
-            log:printInfo(string `Retrieved ${entries.length()} versions for ${resourceType}/${id}`);
+            log:printDebug(string `Retrieved ${entries.length()} versions for ${resourceType}/${id}`);
             return bundle;
         } else {
             string errorMsg = result.message();
@@ -644,7 +645,7 @@ isolated function performResourceHistory(string resourceType, string id) returns
 
 // Utility function to handle all resource history retrieval for a resource type
 isolated function performAllResourceHistory(string resourceType) returns r4:Bundle|r4:OperationOutcome|r4:FHIRError {
-    log:printInfo(string `${resourceType}: All History - Start Execution`);
+    log:printDebug(string `${resourceType}: All History - Start Execution`);
     do {
         handlers:HistoryHandler historyHandler = new handlers:HistoryHandler(jdbcClient);
         map<json>[]|error result = historyHandler.getAllHistory(resourceType);
@@ -684,7 +685,7 @@ isolated function performAllResourceHistory(string resourceType) returns r4:Bund
                 entry: entries
             };
 
-            log:printInfo(string `Retrieved ${entries.length()} total history entries for ${resourceType}`);
+            log:printDebug(string `Retrieved ${entries.length()} total history entries for ${resourceType}`);
             return bundle;
         } else {
             string errorMsg = result.message();
@@ -715,13 +716,13 @@ isolated function convertToTypedResource(any|r4:OperationOutcome|r4:FHIRError re
 
 // Utility function to handle resource read by ID operations
 isolated function performResourceRead(string resourceType, string id) returns any|r4:OperationOutcome|r4:FHIRError {
-    log:printInfo(string `${resourceType}: Read - Start Execution for ID: ${id}`);
+    log:printDebug(string `${resourceType}: Read - Start Execution for ID: ${id}`);
     do {
         handlers:ReadHandler readHandler = new handlers:ReadHandler();
         json|error result = readHandler.readResource(jdbcClient, resourceType, id);
 
         if result is json {
-            log:printInfo(string `${resourceType}: READ - Execution Success!`);
+            log:printDebug(string `${resourceType}: READ - Execution Success!`);
             any parsedResource = check fhirParser:parse(result).ensureType();
             return parsedResource;
         } else {
@@ -743,7 +744,7 @@ isolated function performResourceRead(string resourceType, string id) returns an
 
 // Utility function to handle resource version read by ID and version ID operations
 isolated function performResourceVersionRead(string resourceType, string id, string vid) returns any|r4:OperationOutcome|r4:FHIRError {
-    log:printInfo(string `${resourceType}: Version Read - Start Execution for ID: ${id}, Version: ${vid}`);
+    log:printDebug(string `${resourceType}: Version Read - Start Execution for ID: ${id}, Version: ${vid}`);
     do {
         handlers:HistoryHandler historyHandler = new handlers:HistoryHandler(jdbcClient);
         int versionId = check int:fromString(vid);
@@ -752,7 +753,7 @@ isolated function performResourceVersionRead(string resourceType, string id, str
         if result is map<json> {
             // Extract just the resource from the map
             json resourceData = result.get("resource");
-            log:printInfo(string `${resourceType}: VERSION READ - Execution Success! Retrieved ${resourceType}/${id}/_history/${vid}`);
+            log:printDebug(string `${resourceType}: VERSION READ - Execution Success! Retrieved ${resourceType}/${id}/_history/${vid}`);
             any parsedResource = check fhirParser:parse(resourceData).ensureType();
             return parsedResource;
         } else {
@@ -768,13 +769,13 @@ isolated function performResourceVersionRead(string resourceType, string id, str
 
 // Utility function to handle resource creation operations
 isolated function performResourceCreate(string resourceType, json resourceJson) returns any|r4:OperationOutcome|r4:FHIRError {
-    log:printInfo(string `${resourceType}: Create - Start Execution`);
+    log:printDebug(string `${resourceType}: Create - Start Execution`);
     do {
         handlers:CreateHandler createHandler = new handlers:CreateHandler(jdbcClient);
         string|error? result = createHandler.saveResourceWithTransaction(resourceType, resourceJson);
 
         if result is string {
-            log:printInfo(string `${resourceType}: POST - Execution Success!`);
+            log:printDebug(string `${resourceType}: POST - Execution Success!`);
             any parsedResource = check fhirParser:parse(resourceJson).ensureType();
             return parsedResource;
         } else {
@@ -807,13 +808,13 @@ isolated function performResourceCreate(string resourceType, json resourceJson) 
 
 // Utility function to handle resource update operations
 isolated function performResourceUpdate(string resourceType, string id, json resourceJson) returns any|r4:OperationOutcome|r4:FHIRError {
-    log:printInfo(string `${resourceType}: Update - Start Execution for ID: ${id}`);
+    log:printDebug(string `${resourceType}: Update - Start Execution for ID: ${id}`);
     do {
         handlers:UpdateHandler updateHandler = new handlers:UpdateHandler(jdbcClient);
         string|error result = updateHandler.updateResourceWithTransaction(resourceType, id, resourceJson);
 
         if result is string {
-            log:printInfo(string `${resourceType}: PUT - Execution Success!`);
+            log:printDebug(string `${resourceType}: PUT - Execution Success!`);
             any parsedResource = check fhirParser:parse(resourceJson).ensureType();
             return parsedResource;
         } else {
@@ -841,13 +842,13 @@ isolated function performResourceUpdate(string resourceType, string id, json res
 
 // Utility function to handle resource patch operations
 isolated function performResourcePatch(string resourceType, string id, json patch) returns any|r4:OperationOutcome|r4:FHIRError {
-    log:printInfo(string `${resourceType}: Patch - Start Execution for ID: ${id}`);
+    log:printDebug(string `${resourceType}: Patch - Start Execution for ID: ${id}`);
     do {
         handlers:UpdateHandler updateHandler = new handlers:UpdateHandler(jdbcClient);
         json|error result = updateHandler.patchResourceWithTransaction(resourceType, id, patch);
 
         if result is json {
-            log:printInfo(string `${resourceType}: PATCH - Execution Success!`);
+            log:printDebug(string `${resourceType}: PATCH - Execution Success!`);
             any parsedResource = check fhirParser:parse(result).ensureType();
             return parsedResource;
         } else {
