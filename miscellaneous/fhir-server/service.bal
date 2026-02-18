@@ -50,6 +50,10 @@ configurable IpsConfig ips = {
     documentTitle: "International Patient Summary"
 };
 
+configurable int exportServicePort = 9091;
+configurable string exportServiceBaseUrl = "http://localhost:9091";
+configurable string serverName = "Ballerina FHIR Server";
+
 # Generic types to wrap all implemented profiles for each resource.
 # Add required profile types here.
 public type Appointment international401:Appointment;
@@ -375,6 +379,40 @@ function init() returns error? {
     }
 
     log:printInfo("FHIR Server started successfully");
+    // Ensure Device/fhir-server exists for AuditEvent logging
+    handlers:ReadHandler readHandler = new handlers:ReadHandler();
+    json|error deviceResult = readHandler.readResource(jdbcClient, "Device", "fhir-server");
+
+    if deviceResult is error {
+        // Device not found or error, try to create it
+        log:printInfo("Device/fhir-server not found, creating...");
+
+        international401:Device device = {
+            id: "fhir-server",
+            deviceName: [
+                {
+                    name: serverName,
+                    'type: "user-friendly-name"
+                }
+            ],
+            'type: {
+                coding: [
+                    {
+                        system: "http://terminology.hl7.org/CodeSystem/device-type",
+                        code: "ubiquitous",
+                        display: "Ubiquitous device"
+                    }
+                ]
+            }
+        };
+
+        any|r4:OperationOutcome|r4:FHIRError createResult = performResourceCreate("Device", device.toJson());
+        if createResult is r4:FHIRError {
+            log:printError("Failed to create Device/fhir-server: " + createResult.message());
+        } else {
+            log:printInfo("Successfully created Device/fhir-server");
+        }
+    }
 }
 
 listener http:Listener httpListener = http:getDefaultListener();
@@ -1284,13 +1322,16 @@ function initiateExportOperation(string resourceType, r4:FHIRContext fhirContext
         return r4:createFHIRError("Failed to initiate export", r4:ERROR, r4:PROCESSING, httpStatusCode = http:STATUS_INTERNAL_SERVER_ERROR);
     }
 
+    // Create AuditEvent for initiation
+    createExportAuditEvent(jobId, string `Export Job ${jobId} Initiated`, "0", patientId);
+
     // Start background processing in a new strand
     future<()> _ = start processExportJob(jobId, resourceType, patientId, outputFormat, typeFilter);
 
     // Return 202 Accepted with Content-Location header
     http:Response response = new;
     response.statusCode = 202;
-    response.setHeader("Content-Location", string `/fhir/_export/status/${jobId}`);
+    response.setHeader("Content-Location", string `${exportServiceBaseUrl}/fhir/_export/status/${jobId}`);
 
     log:printDebug(string `${resourceType}: Export - Job ${jobId} initiated`);
     return response;
@@ -1403,7 +1444,7 @@ function processExportJob(string jobId, string resourceType, string? patientId =
 
             outputFiles.push({
                 'type: "Bundle",
-                url: string `/fhir/_export/download/${jobId}/${fileName}`,
+                url: string `${exportServiceBaseUrl}/fhir/_export/download/${jobId}/${fileName}`,
                 count: totalCount
             });
 
@@ -1429,7 +1470,7 @@ function processExportJob(string jobId, string resourceType, string? patientId =
 
                     outputFiles.push({
                         'type: resType,
-                        url: string `/fhir/_export/download/${jobId}/${fileName}`,
+                        url: string `${exportServiceBaseUrl}/fhir/_export/download/${jobId}/${fileName}`,
                         count: resources.length()
                     });
 
@@ -1447,6 +1488,9 @@ function processExportJob(string jobId, string resourceType, string? patientId =
 
         log:printInfo(string `Export Job ${jobId}: Completed successfully with ${outputFiles.length()} files`);
 
+        // Create AuditEvent for completion
+        createExportAuditEvent(jobId, string `Export Job ${jobId} Completed`, "0", patientId);
+
     } on fail error e {
         // Update job status to failed
         string jobDir = EXPORT_DIR + jobId + "/";
@@ -1463,6 +1507,109 @@ function processExportJob(string jobId, string resourceType, string? patientId =
         }
 
         log:printError(string `Export Job ${jobId}: Failed - ${e.message()}`);
+
+        // Create AuditEvent for failure
+        createExportAuditEvent(jobId, string `Export Job ${jobId} Failed: ${e.message()}`, "8", patientId);
+    }
+}
+
+// Helper to create AuditEvent for export jobs
+isolated function createExportAuditEvent(string jobId, string status, string outcome, string? patientId = ()) {
+    // Construct AuditEvent
+    international401:AuditEvent auditEvent = {
+        id: uuid:createType1AsString(),
+        'type: {
+            system: "http://terminology.hl7.org/CodeSystem/audit-event-type",
+            code: "rest",
+            display: "RESTful Operation"
+        },
+        subtype: [
+            {
+                system: "http://hl7.org/fhir/restful-interaction",
+                code: "operation",
+                display: "Export Operation"
+            }
+        ],
+        action: "E", // Execute
+        recorded: time:utcToString(time:utcNow()),
+        outcome: outcome, // code
+        outcomeDesc: status,
+        agent: [
+            {
+                'type: {
+                    coding: [
+                        {
+                            system: "http://terminology.hl7.org/CodeSystem/v3-ParticipationType",
+                            code: "AUT",
+                            display: "Author"
+                        }
+                    ]
+                },
+                who: {
+                    reference: "Device/fhir-server",
+                    display: serverName
+                },
+                requestor: true
+            }
+        ],
+        'source: {
+            observer: {
+                reference: "Device/fhir-server",
+                display: serverName
+            }
+        },
+        entity: [
+            {
+                'type: {
+                    system: "http://terminology.hl7.org/CodeSystem/audit-entity-type",
+                    code: "2", // System Object
+                    display: "System Object"
+                },
+                role: {
+                    system: "http://terminology.hl7.org/CodeSystem/object-role",
+                    code: "24", // Query
+                    display: "Query"
+                }
+            }
+        ]
+    };
+
+    if patientId is string {
+        international401:AuditEventEntity entity = {
+            'type: {
+                system: "http://terminology.hl7.org/CodeSystem/audit-entity-type",
+                code: "1", // Person
+                display: "Person"
+            },
+            role: {
+                system: "http://terminology.hl7.org/CodeSystem/object-role",
+                code: "1", // Patient
+                display: "Patient"
+            },
+            what: {
+                reference: string `Patient/${patientId}`
+            }
+        };
+        international401:AuditEventEntity[]? entities = auditEvent.entity;
+        if entities is international401:AuditEventEntity[] {
+            entities.push(entity);
+        } else {
+            auditEvent.entity = [entity];
+        }
+    }
+
+    // Make auditEvent immutable for safe transfer to async worker
+    international401:AuditEvent & readonly auditEventReadOnly = auditEvent.cloneReadOnly();
+
+    // Save AuditEvent asynchronously
+    future<()> _ = start saveAuditEvent(jobId, auditEventReadOnly.toJson());
+}
+
+// Helper to save AuditEvent asynchronously
+isolated function saveAuditEvent(string jobId, json auditEventJson) {
+    any|r4:OperationOutcome|r4:FHIRError result = performResourceCreate("AuditEvent", auditEventJson);
+    if result is r4:FHIRError {
+        log:printError(string `Failed to create AuditEvent for job ${jobId}: ${result.message()}`);
     }
 }
 
@@ -1665,7 +1812,7 @@ isolated function performValidateOperation(string resourceType, Parameters param
 }
 
 // # Export Endpoints Service (for async bulk data export)
-service /fhir/_export on new http:Listener(9091) {
+service /fhir/_export on new http:Listener(exportServicePort) {
 
     // Check export job status
     resource function get status/[string jobId]() returns http:Response|r4:FHIRError {
