@@ -1,6 +1,7 @@
 import ballerina_fhir_server.mappers;
 
 import ballerina/log;
+import ballerinax/health.fhir.r4;
 import ballerinax/java.jdbc;
 
 public class ReadHandler {
@@ -27,11 +28,11 @@ public class ReadHandler {
     }
 
     // Function to search resources with query parameters
-    public isolated function searchResources(jdbc:Client? jdbcClient, string resourceType, map<string[]> queryParams) returns json|error {
+    public isolated function searchResources(jdbc:Client? jdbcClient, string resourceType, map<string[]> queryParams, r4:PaginationContext? paginationContext = ()) returns json|error {
         log:printDebug(string `Searching ${resourceType} with ${queryParams.keys().length()} query parameter(s)`);
 
         // Use ReadMapper to search resources
-        json|error searchResults = self.readMapper.searchResources(jdbcClient, resourceType, queryParams);
+        json|error searchResults = self.readMapper.searchResources(jdbcClient, resourceType, queryParams, paginationContext);
 
         if searchResults is error {
             log:printError(string `Search failed for ${resourceType}: ${searchResults.message()}`);

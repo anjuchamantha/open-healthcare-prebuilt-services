@@ -1,9 +1,10 @@
 import ballerina_fhir_server.utils;
 import ballerina_fhir_server.utils as mapperUtils;
 
+import ballerina/lang.regexp;
 import ballerina/sql;
 import ballerina/time;
-import ballerina/lang.regexp;
+import ballerinax/health.fhir.r4;
 import ballerinax/java.jdbc;
 
 // Server base URL configuration
@@ -43,21 +44,22 @@ public class ReadMapper {
         map<json> resourceMap = <map<json>>resourceJson;
         json existingMeta = resourceMap["meta"];
         map<json> metaMap = existingMeta is map<json> ? existingMeta : {};
-        
+
         metaMap["versionId"] = results[0].VERSION_ID.toString();
-        
+
         // Format timestamp as ISO 8601 string
         time:Civil lastUpdated = results[0].LAST_UPDATED;
         string timestamp = utils:formatTimestampISO8601(lastUpdated);
         metaMap["lastUpdated"] = timestamp;
-        
+
         resourceMap["meta"] = metaMap;
 
         return resourceMap;
     }
 
     // Search resources with filters - basic implementation
-    public isolated function searchResources(jdbc:Client? jdbcClient, string resourceType, map<string[]> queryParams) returns json|error {
+    // Search resources with filters - basic implementation
+    public isolated function searchResources(jdbc:Client? jdbcClient, string resourceType, map<string[]> queryParams, r4:PaginationContext? paginationContext = ()) returns json|error {
         if jdbcClient is () {
             return error("JDBC client is not initialized");
         }
@@ -69,14 +71,14 @@ public class ReadMapper {
         // First, check if there are any custom extension search parameters
         map<string[]> customParams = {};
         map<string[]> standardParams = {};
-        
+
         foreach var [paramName, paramValues] in queryParams.entries() {
             // Skip control parameters
             if paramName.startsWith("_") || paramName.includes("/") {
                 standardParams[paramName] = paramValues;
                 continue;
             }
-            
+
             // Check if this is a custom extension parameter
             boolean isCustom = check self.isCustomSearchParam(jdbcClient, resourceType, paramName);
             if isCustom {
@@ -85,12 +87,12 @@ public class ReadMapper {
                 standardParams[paramName] = paramValues;
             }
         }
-        
+
         // Get resource IDs from custom extension search if applicable
         string[]? customResourceIds = ();
         if customParams.length() > 0 {
             customResourceIds = check utils:searchResourcesByCustomParams(jdbcClient, resourceType, customParams);
-            
+
             // If custom search returned no results, return empty bundle
             if customResourceIds is string[] && customResourceIds.length() == 0 {
                 return self.createEmptyBundle();
@@ -109,25 +111,25 @@ public class ReadMapper {
             }
 
             string paramValue = paramValues[0];
-            
+
             // Check if this is a reference parameter
             // Either: 1) paramName contains "/" (e.g., "Patient/123" as key)
             //     or: 2) paramValue contains "/" (e.g., patient=Patient/123)
             boolean isReferenceParam = paramName.includes("/") || paramValue.includes("/");
-            
+
             if isReferenceParam {
                 hasReferenceParams = true;
                 string refValue = "";
-                
+
                 // Case 1: paramName is "Patient/123" (old format)
                 if paramName.includes("/") {
                     refValue = paramName;
-                } 
+                }
                 // Case 2: patient=Patient/123 (proper FHIR search format)
                 else {
                     refValue = paramValue;
                 }
-                
+
                 string[] parts = regexp:split(re `/`, refValue);
                 if parts.length() == 2 {
                     string targetType = parts[0];
@@ -138,7 +140,7 @@ public class ReadMapper {
                     // (e.g., searching patient=Patient/123 matches any reference to that Patient,
                     //  whether stored as "actor", "patient", "subject", etc.)
                     string refQuery = string `SELECT DISTINCT "SOURCE_RESOURCE_ID" FROM "REFERENCES" WHERE "SOURCE_RESOURCE_TYPE" = '${utils:escapeSql(resourceType)}' AND "TARGET_RESOURCE_TYPE" = '${utils:escapeSql(targetType)}' AND "TARGET_RESOURCE_ID" = '${utils:escapeSql(targetId)}'`;
-                    
+
                     sql:ParameterizedQuery query = new utils:RawSQLQuery(refQuery);
 
                     stream<record {|string SOURCE_RESOURCE_ID;|}, sql:Error?> refStream = jdbcClient->query(query);
@@ -183,7 +185,7 @@ public class ReadMapper {
 
         // Build WHERE clause for ID filtering if we have reference matches or custom extension matches
         string whereClause = "";
-        
+
         // Combine reference and custom resource IDs if both exist
         string[]? finalResourceIds = ();
         if matchingResourceIds is string[] && customResourceIds is string[] {
@@ -200,7 +202,7 @@ public class ReadMapper {
         } else if customResourceIds is string[] {
             finalResourceIds = customResourceIds;
         }
-        
+
         if finalResourceIds is string[] && finalResourceIds.length() > 0 {
             string idList = string:'join("', '", ...finalResourceIds);
             whereClause = string ` WHERE "${primaryKey}" IN ('${idList}')`;
@@ -244,19 +246,19 @@ public class ReadMapper {
             }
 
             string paramValue = paramValues[0];
-            
+
             // Skip already processed parameters
             if paramName == "_id" {
                 continue;
             }
-            
+
             // Skip reference parameters (already processed above)
             // Reference params have "/" BUT not token params (which use | for system|code)
             // Token example: identifier=http://hospital.org|12345 (has "/" but is NOT a reference)
             // Reference example: patient=Patient/123 (has "/" and IS a reference)
             boolean isTokenParam = paramValue.includes("|");
             boolean hasSlash = paramName.includes("/") || paramValue.includes("/");
-            
+
             if hasSlash && !isTokenParam {
                 continue;
             }
@@ -288,7 +290,7 @@ public class ReadMapper {
                 if tokenParts.length() == 2 {
                     string systemPart = tokenParts[0];
                     string codePart = tokenParts[1];
-                    
+
                     if systemPart == "" && codePart != "" {
                         // Case 3: |[code] - code with no system
                         tokenCode = codePart;
@@ -342,20 +344,20 @@ public class ReadMapper {
 
             // Map FHIR search parameter names to database column names
             string? columnName = self.mapSearchParamToColumn(paramName);
-            
+
             // Validate that the column exists in the table schema
             if columnName is string && !self.arrayContains(tableColumns, columnName) {
                 // Column doesn't exist - skip this search parameter
                 continue;
             }
-            
+
             if columnName is string {
                 // For token parameters with system|code format
                 // Token columns contain JSON like [{"coding":[{"system":"...","code":"..."}]}]
                 if isTokenParam {
                     string sanitizedSystem = tokenSystem is string ? utils:escapeSql(tokenSystem) : "";
                     string sanitizedCode = tokenCode is string ? utils:escapeSql(tokenCode) : "";
-                    
+
                     if tokenSystem is string && tokenCode is string {
                         // Case 2: [system]|[code] - Both system and code must match
                         if whereClause == "" {
@@ -407,7 +409,16 @@ public class ReadMapper {
             }
         }
 
-        string sqlQuery = string `SELECT "${primaryKey}", "RESOURCE_JSON", "VERSION_ID", "LAST_UPDATED" FROM "${tableName}"${whereClause}`;
+        // Add pagination clause
+        string paginationClause = "";
+        if paginationContext is r4:PaginationContext {
+            int pageSize = paginationContext.pageSize;
+            int page = paginationContext.page;
+            int offset = (page - 1) * pageSize;
+            paginationClause = string ` LIMIT ${pageSize} OFFSET ${offset}`;
+        }
+
+        string sqlQuery = string `SELECT "${primaryKey}", "RESOURCE_JSON", "VERSION_ID", "LAST_UPDATED" FROM "${tableName}"${whereClause}${paginationClause}`;
         sql:ParameterizedQuery query = new RawSQLQuery(sqlQuery);
 
         stream<record {|byte[] RESOURCE_JSON; int VERSION_ID; time:Civil LAST_UPDATED; string...;|}, sql:Error?> resultStream = jdbcClient->query(query);
@@ -418,7 +429,7 @@ public class ReadMapper {
         // Convert to FHIR Bundle
         json[] entries = [];
         string[] matchedResourceIds = [];
-        
+
         foreach var result in results {
             byte[] resourceJsonBytes = result.RESOURCE_JSON;
             string resourceJsonString = check string:fromBytes(resourceJsonBytes);
@@ -428,14 +439,14 @@ public class ReadMapper {
             map<json> resourceMap = <map<json>>resourceJson;
             json existingMeta = resourceMap["meta"];
             map<json> metaMap = existingMeta is map<json> ? existingMeta : {};
-            
+
             metaMap["versionId"] = result.VERSION_ID.toString();
-            
+
             // Format timestamp as ISO 8601 string
             time:Civil lastUpdated = result.LAST_UPDATED;
             string timestamp = utils:formatTimestampISO8601(lastUpdated);
             metaMap["lastUpdated"] = timestamp;
-            
+
             resourceMap["meta"] = metaMap;
 
             // Get the resource ID
@@ -461,14 +472,14 @@ public class ReadMapper {
         // Handle _include parameters
         // Track included resources to avoid duplicates (same resource shouldn't appear multiple times)
         map<boolean> includedResourceKeys = {};
-        
+
         if queryParams.hasKey("_include") {
             string[] includeParams = queryParams.get("_include");
             foreach string includeParam in includeParams {
                 // Parse _include parameter: format is ResourceType:searchParam or ResourceType:searchParam:targetType
                 // Example: Appointment:patient or Appointment:patient:Patient
                 // Also support wildcard: _include=* (include all references)
-                
+
                 if includeParam == "*" {
                     // Include all referenced resources from matched results
                     foreach string sourceId in matchedResourceIds {
@@ -481,7 +492,7 @@ public class ReadMapper {
                             string resType = resourceMap.get("resourceType").toString();
                             string resId = resourceMap.get("id").toString();
                             string resourceKey = string `${resType}/${resId}`;
-                            
+
                             if !includedResourceKeys.hasKey(resourceKey) {
                                 entries.push(includedEntry);
                                 includedResourceKeys[resourceKey] = true;
@@ -495,7 +506,7 @@ public class ReadMapper {
                         string sourceResourceType = parts[0];
                         string searchParamName = parts[1];
                         string? targetResourceType = parts.length() > 2 ? parts[2] : ();
-                        
+
                         // Only process if source type matches current search resource type
                         if sourceResourceType == resourceType {
                             foreach string sourceId in matchedResourceIds {
@@ -508,7 +519,7 @@ public class ReadMapper {
                                     string resType = resourceMap.get("resourceType").toString();
                                     string resId = resourceMap.get("id").toString();
                                     string resourceKey = string `${resType}/${resId}`;
-                                    
+
                                     if !includedResourceKeys.hasKey(resourceKey) {
                                         entries.push(includedEntry);
                                         includedResourceKeys[resourceKey] = true;
@@ -528,7 +539,7 @@ public class ReadMapper {
                 // Parse _revinclude parameter: format is ResourceType:searchParam or ResourceType:searchParam:sourceType
                 // Example: Provenance:target or Provenance:target:MedicationRequest
                 // Also support wildcard: _revinclude=* (include all resources that reference these results)
-                
+
                 if revIncludeParam == "*" {
                     // Include all resources that reference the matched results
                     foreach string targetId in matchedResourceIds {
@@ -541,7 +552,7 @@ public class ReadMapper {
                             string resType = resourceMap.get("resourceType").toString();
                             string resId = resourceMap.get("id").toString();
                             string resourceKey = string `${resType}/${resId}`;
-                            
+
                             if !includedResourceKeys.hasKey(resourceKey) {
                                 entries.push(revIncludedEntry);
                                 includedResourceKeys[resourceKey] = true;
@@ -553,18 +564,18 @@ public class ReadMapper {
                     string[] parts = regexp:split(re `:`, revIncludeParam);
                     if parts.length() >= 2 {
                         string sourceResourceType = parts[0]; // The resource type that references the current results
-                        string searchParamName = parts[1];    // The search parameter on sourceResourceType
+                        string searchParamName = parts[1]; // The search parameter on sourceResourceType
                         string? targetResourceFilter = parts.length() > 2 ? parts[2] : ();
-                        
+
                         // Process reverse include for each matched resource
                         // We need to find resources of sourceResourceType that reference our matched results
                         foreach string targetId in matchedResourceIds {
                             json[] revIncludedResources = check self.fetchReverseIncludedResources(
-                                jdbcClient, 
+                                jdbcClient,
                                 sourceResourceType,  // e.g., "Provenance"
-                                searchParamName,     // e.g., "target"
-                                resourceType,        // e.g., "MedicationRequest" (what we searched for)
-                                targetId,            // ID of the matched resource
+                                searchParamName,  // e.g., "target"
+                                resourceType,  // e.g., "MedicationRequest" (what we searched for)
+                                targetId,  // ID of the matched resource
                                 targetResourceFilter // Optional filter if specified
                             );
                             foreach json revIncludedEntry in revIncludedResources {
@@ -575,7 +586,7 @@ public class ReadMapper {
                                 string resType = resourceMap.get("resourceType").toString();
                                 string resId = resourceMap.get("id").toString();
                                 string resourceKey = string `${resType}/${resId}`;
-                                
+
                                 if !includedResourceKeys.hasKey(resourceKey) {
                                     entries.push(revIncludedEntry);
                                     includedResourceKeys[resourceKey] = true;
@@ -625,14 +636,14 @@ public class ReadMapper {
             map<json> resourceMap = <map<json>>resourceJson;
             json existingMeta = resourceMap["meta"];
             map<json> metaMap = existingMeta is map<json> ? existingMeta : {};
-            
+
             metaMap["versionId"] = result.VERSION_ID.toString();
-            
+
             // Format timestamp as ISO 8601 string
             time:Civil lastUpdated = result.LAST_UPDATED;
             string timestamp = utils:formatTimestampISO8601(lastUpdated);
             metaMap["lastUpdated"] = timestamp;
-            
+
             resourceMap["meta"] = metaMap;
 
             // Get the resource ID
@@ -762,7 +773,7 @@ public class ReadMapper {
         if searchParam == "_lastUpdated" {
             return "LAST_UPDATED";
         }
-        
+
         // Convert to UPPER_SNAKE_CASE: uppercase and replace hyphens with underscores
         string upperParam = searchParam.toUpperAscii();
         string columnName = regexp:replaceAll(re `-`, upperParam, "_");
@@ -776,33 +787,33 @@ public class ReadMapper {
         }
 
         json[] includedEntries = [];
-        
+
         // Query REFERENCES table to find target resources
         // The search parameter FHIRPath expressions now include complete where clauses:
         // - "Appointment.participant.actor.where(resolve() is Patient)" for patient references
         // - "ActivityDefinition.relatedArtifact.where(type='composed-of').resource" for related artifacts
         // - "Patient.telecom.where(system='email')" for telecom filters
         // We extract the reference field name (the part before .where) to match SOURCE_EXPRESSION
-        
+
         // Get the FHIRPath expression for this search parameter from the search_param_res_expressions table
         string searchParamQuery = string `SELECT "EXPRESSION" FROM "SEARCH_PARAM_RES_EXPRESSIONS" WHERE "RESOURCE_NAME" = '${utils:escapeSql(sourceResourceType)}' AND "SEARCH_PARAM_NAME" = '${utils:escapeSql(searchParamName)}' AND "SEARCH_PARAM_TYPE" = 'reference'`;
         sql:ParameterizedQuery spQuery = new utils:RawSQLQuery(searchParamQuery);
-        
+
         stream<record {|string EXPRESSION;|}, sql:Error?> spStream = jdbcClient->query(spQuery);
         record {|string EXPRESSION;|}[] spResults = check from var sp in spStream
             select sp;
-        
+
         // If we can't find the search parameter, return empty (the search parameter might not exist for this resource type)
         if spResults.length() == 0 {
             return includedEntries;
         }
-        
+
         // Build WHERE clause for REFERENCES table
         // Since SOURCE_EXPRESSION stores the actual JSON path leaf field (e.g., "actor"),
         // and we have the FHIRPath expression (e.g., "Appointment.participant.actor.where"),
         // we need to extract the actual reference field name (the last field before .where)
         string fhirPathExpr = spResults[0].EXPRESSION;
-        
+
         // Extract the reference field name and target resource type from FHIRPath
         // Examples:
         //   "Appointment.participant.actor.where(resolve() is Patient)" -> field: "actor", type: "Patient"
@@ -812,7 +823,7 @@ public class ReadMapper {
         string[] pathParts = regexp:split(re `\.`, fhirPathExpr);
         string? referenceField = ();
         string? extractedTargetType = ();
-        
+
         // Find the last field before ".where" or the last field if no ".where"
         foreach int i in 0 ..< pathParts.length() {
             string part = pathParts[i];
@@ -827,7 +838,7 @@ public class ReadMapper {
                 if i > 0 {
                     referenceField = pathParts[i - 1];
                 }
-                
+
                 // Try to extract target resource type from "where(resolve() is ResourceType)"
                 string wherePattern = "where(resolve() is ";
                 if part.startsWith(wherePattern) {
@@ -843,20 +854,20 @@ public class ReadMapper {
                 referenceField = part;
             }
         }
-        
+
         string whereClause = string `"SOURCE_RESOURCE_TYPE" = '${utils:escapeSql(sourceResourceType)}' AND "SOURCE_RESOURCE_ID" = '${utils:escapeSql(sourceResourceId)}'`;
-        
+
         // Filter by SOURCE_EXPRESSION matching the reference field name
         if referenceField is string {
             whereClause = whereClause + string ` AND "SOURCE_EXPRESSION" = '${utils:escapeSql(referenceField)}'`;
         }
-        
+
         // Filter by target resource type - use extracted type from expression if available, otherwise use provided targetResourceType
         string? finalTargetType = extractedTargetType is string ? extractedTargetType : targetResourceType;
         if finalTargetType is string {
             whereClause = whereClause + string ` AND "TARGET_RESOURCE_TYPE" = '${utils:escapeSql(finalTargetType)}'`;
         }
-        
+
         string refQuery = string `SELECT DISTINCT "TARGET_RESOURCE_TYPE", "TARGET_RESOURCE_ID" FROM "REFERENCES" WHERE ${whereClause}`;
         sql:ParameterizedQuery query = new utils:RawSQLQuery(refQuery);
 
@@ -868,10 +879,10 @@ public class ReadMapper {
         foreach var refRecord in refResults {
             string targetType = refRecord.TARGET_RESOURCE_TYPE;
             string targetId = refRecord.TARGET_RESOURCE_ID;
-            
+
             // Use existing readResourceById to fetch the resource
             json|error resourceResult = self.readResourceById(jdbcClient, targetType, targetId);
-            
+
             if resourceResult is json {
                 json entry = {
                     "fullUrl": string `${baseUrl}/fhir/r4/${targetType}/${targetId}`,
@@ -895,7 +906,7 @@ public class ReadMapper {
         }
 
         json[] includedEntries = [];
-        
+
         // Query all references for this source resource
         string refQuery = string `SELECT DISTINCT "TARGET_RESOURCE_TYPE", "TARGET_RESOURCE_ID" FROM "REFERENCES" WHERE "SOURCE_RESOURCE_TYPE" = '${utils:escapeSql(sourceResourceType)}' AND "SOURCE_RESOURCE_ID" = '${utils:escapeSql(sourceResourceId)}'`;
         sql:ParameterizedQuery query = new utils:RawSQLQuery(refQuery);
@@ -908,10 +919,10 @@ public class ReadMapper {
         foreach var refRecord in refResults {
             string targetType = refRecord.TARGET_RESOURCE_TYPE;
             string targetId = refRecord.TARGET_RESOURCE_ID;
-            
+
             // Use existing readResourceById to fetch the resource
             json|error resourceResult = self.readResourceById(jdbcClient, targetType, targetId);
-            
+
             if resourceResult is json {
                 json entry = {
                     "fullUrl": string `${baseUrl}/fhir/r4/${targetType}/${targetId}`,
@@ -932,40 +943,40 @@ public class ReadMapper {
     // Example: GET /MedicationRequest?_revinclude=Provenance:target
     // This finds Provenance resources where their "target" search parameter points to the MedicationRequest
     private isolated function fetchReverseIncludedResources(
-        jdbc:Client? jdbcClient, 
-        string sourceResourceType,      // e.g., "Provenance" - the resource type that references our results
-        string searchParamName,          // e.g., "target" - the search parameter on Provenance
-        string targetResourceType,       // e.g., "MedicationRequest" - the resource type we searched for
-        string targetResourceId,         // e.g., "med-123" - the ID of the matched resource
-        string? sourceResourceFilter     // Optional filter for source resource type
+            jdbc:Client? jdbcClient,
+            string sourceResourceType, // e.g., "Provenance" - the resource type that references our results
+            string searchParamName, // e.g., "target" - the search parameter on Provenance
+            string targetResourceType, // e.g., "MedicationRequest" - the resource type we searched for
+            string targetResourceId, // e.g., "med-123" - the ID of the matched resource
+            string? sourceResourceFilter // Optional filter for source resource type
     ) returns json[]|error {
         if jdbcClient is () {
             return error("JDBC client is not initialized");
         }
 
         json[] revIncludedEntries = [];
-        
+
         // Get the FHIRPath expression for this search parameter
         // For Provenance:target, we get the expression like "Provenance.target.where(resolve() is MedicationRequest)"
         string searchParamQuery = string `SELECT "EXPRESSION" FROM "SEARCH_PARAM_RES_EXPRESSIONS" WHERE "RESOURCE_NAME" = '${utils:escapeSql(sourceResourceType)}' AND "SEARCH_PARAM_NAME" = '${utils:escapeSql(searchParamName)}' AND "SEARCH_PARAM_TYPE" = 'reference'`;
         sql:ParameterizedQuery spQuery = new utils:RawSQLQuery(searchParamQuery);
-        
+
         stream<record {|string EXPRESSION;|}, sql:Error?> spStream = jdbcClient->query(spQuery);
         record {|string EXPRESSION;|}[] spResults = check from var sp in spStream
             select sp;
-        
+
         if spResults.length() == 0 {
             return revIncludedEntries;
         }
-        
+
         string fhirPathExpr = spResults[0].EXPRESSION;
-        
+
         // Extract the reference field name and expected target type from FHIRPath
         // Example: "Provenance.target.where(resolve() is MedicationRequest)" -> field: "target", type: "MedicationRequest"
         string[] pathParts = regexp:split(re `\.`, fhirPathExpr);
         string? referenceField = ();
         string? extractedTargetType = ();
-        
+
         foreach int i in 0 ..< pathParts.length() {
             string part = pathParts[i];
             if part == "where" {
@@ -977,7 +988,7 @@ public class ReadMapper {
                 if i > 0 {
                     referenceField = pathParts[i - 1];
                 }
-                
+
                 // Extract target resource type from "where(resolve() is ResourceType)"
                 string wherePattern = "where(resolve() is ";
                 if part.startsWith(wherePattern) {
@@ -992,27 +1003,27 @@ public class ReadMapper {
                 referenceField = part;
             }
         }
-        
+
         // Build query to find resources that reference our target
         // We're looking in REFERENCES table where:
         // - SOURCE_RESOURCE_TYPE = the resource type that references us (e.g., "Provenance")
         // - TARGET_RESOURCE_TYPE = the resource type we searched for (e.g., "MedicationRequest")
         // - TARGET_RESOURCE_ID = the ID of our matched resource
         // - SOURCE_EXPRESSION = the field name (e.g., "target")
-        
+
         string whereClause = string `"TARGET_RESOURCE_TYPE" = '${utils:escapeSql(targetResourceType)}' AND "TARGET_RESOURCE_ID" = '${utils:escapeSql(targetResourceId)}' AND "SOURCE_RESOURCE_TYPE" = '${utils:escapeSql(sourceResourceType)}'`;
-        
+
         if referenceField is string {
             whereClause = whereClause + string ` AND "SOURCE_EXPRESSION" = '${utils:escapeSql(referenceField)}'`;
         }
-        
+
         // Optional: filter by expected target type from the expression
         // This ensures we only get references where the search parameter actually points to our resource type
         if extractedTargetType is string && extractedTargetType == targetResourceType {
             // The expression specifies the exact target type, which matches our target
             // This is already filtered by TARGET_RESOURCE_TYPE above
         }
-        
+
         string refQuery = string `SELECT DISTINCT "SOURCE_RESOURCE_TYPE", "SOURCE_RESOURCE_ID" FROM "REFERENCES" WHERE ${whereClause}`;
         sql:ParameterizedQuery query = new utils:RawSQLQuery(refQuery);
 
@@ -1024,10 +1035,10 @@ public class ReadMapper {
         foreach var refRecord in refResults {
             string sourceType = refRecord.SOURCE_RESOURCE_TYPE;
             string sourceId = refRecord.SOURCE_RESOURCE_ID;
-            
+
             // Use existing readResourceById to fetch the resource
             json|error resourceResult = self.readResourceById(jdbcClient, sourceType, sourceId);
-            
+
             if resourceResult is json {
                 json entry = {
                     "fullUrl": string `${baseUrl}/fhir/r4/${sourceType}/${sourceId}`,
@@ -1051,7 +1062,7 @@ public class ReadMapper {
         }
 
         json[] revIncludedEntries = [];
-        
+
         // Query all resources that reference this target resource
         string refQuery = string `SELECT DISTINCT "SOURCE_RESOURCE_TYPE", "SOURCE_RESOURCE_ID" FROM "REFERENCES" WHERE "TARGET_RESOURCE_TYPE" = '${utils:escapeSql(targetResourceType)}' AND "TARGET_RESOURCE_ID" = '${utils:escapeSql(targetResourceId)}'`;
         sql:ParameterizedQuery query = new utils:RawSQLQuery(refQuery);
@@ -1064,10 +1075,10 @@ public class ReadMapper {
         foreach var refRecord in refResults {
             string sourceType = refRecord.SOURCE_RESOURCE_TYPE;
             string sourceId = refRecord.SOURCE_RESOURCE_ID;
-            
+
             // Use existing readResourceById to fetch the resource
             json|error resourceResult = self.readResourceById(jdbcClient, sourceType, sourceId);
-            
+
             if resourceResult is json {
                 json entry = {
                     "fullUrl": string `${baseUrl}/fhir/r4/${sourceType}/${sourceId}`,
@@ -1093,15 +1104,15 @@ public class ReadMapper {
             AND "SEARCH_PARAM_NAME" = ${paramName}
             AND "IS_CUSTOM" = ${true}
         `;
-        
+
         stream<record {int count;}, sql:Error?> resultStream = jdbcClient->query(query);
         record {|record {int count;} value;|}|sql:Error? nextRecord = resultStream.next();
         check resultStream.close();
-        
+
         if nextRecord is record {|record {int count;} value;|} {
             return nextRecord.value.count > 0;
         }
-        
+
         return false;
     }
 
