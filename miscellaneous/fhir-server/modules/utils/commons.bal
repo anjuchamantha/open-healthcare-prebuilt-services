@@ -32,11 +32,11 @@ public isolated function getValidatedJdbcClient(jdbc:Client? jdbcClient) returns
 }
 
 // Generate a unique resource ID using UUID
-// Returns first segment of UUID for a shorter ID (8 characters)
+// Returns full UUID without dashes for maximum uniqueness (32 characters)
+// This prevents collisions during high-concurrency performance tests
 public isolated function generateResourceId() returns string {
     string fullUuid = uuid:createType1AsString();
-    string[] parts = regex:split(fullUuid, "-");
-    return parts[0];
+    return regex:replaceAll(fullUuid, "-", "");
 }
 
 // Format a value for SQL INSERT/UPDATE statements
